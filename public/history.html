@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>BoozeTracker · History</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🍺</text></svg>" />
+  </head>
+  <body class="bg-slate-900 text-slate-100 min-h-screen">
+    <div class="max-w-4xl mx-auto px-4 py-6">
+      <header class="flex items-center justify-between mb-6">
+        <h1 class="text-2xl font-bold flex items-center gap-2">📊 History</h1>
+        <nav class="flex gap-2 text-sm">
+          <a href="/" class="px-3 py-1 rounded-md bg-slate-700 hover:bg-slate-600">Tonight</a>
+          <a href="/history.html" class="px-3 py-1 rounded-md bg-booze-500 text-white font-medium">History</a>
+        </nav>
+      </header>
+
+      <!-- BAC over time -->
+      <section class="bg-slate-800/50 rounded-2xl p-5 mb-6">
+        <div class="flex items-center justify-between mb-3">
+          <h2 class="text-lg font-semibold">BAC over time</h2>
+          <div id="range-bac" class="flex gap-2"></div>
+        </div>
+        <div class="h-72"><canvas id="bac-chart"></canvas></div>
+      </section>
+
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <!-- Drinks per night -->
+        <section class="bg-slate-800/50 rounded-2xl p-5">
+          <div class="flex items-center justify-between mb-3">
+            <h2 class="text-lg font-semibold">Drinks per night</h2>
+            <div id="range-drinks" class="flex gap-2"></div>
+          </div>
+          <div class="h-64"><canvas id="drinks-chart"></canvas></div>
+        </section>
+
+        <!-- Peak BAC per night -->
+        <section class="bg-slate-800/50 rounded-2xl p-5">
+          <div class="flex items-center justify-between mb-3">
+            <h2 class="text-lg font-semibold">Peak BAC per night</h2>
+            <div id="range-peak" class="flex gap-2"></div>
+          </div>
+          <div class="h-64"><canvas id="peak-chart"></canvas></div>
+        </section>
+
+        <!-- Total alcohol per night -->
+        <section class="bg-slate-800/50 rounded-2xl p-5">
+          <div class="flex items-center justify-between mb-3">
+            <h2 class="text-lg font-semibold">Alcohol (g) per night</h2>
+            <div id="range-grams" class="flex gap-2"></div>
+          </div>
+          <div class="h-64"><canvas id="grams-chart"></canvas></div>
+        </section>
+
+        <!-- Avg drinks by day of week -->
+        <section class="bg-slate-800/50 rounded-2xl p-5">
+          <div class="flex items-center justify-between mb-3">
+            <h2 class="text-lg font-semibold">Avg by day of week</h2>
+            <div id="range-dow" class="flex gap-2"></div>
+          </div>
+          <div class="h-64"><canvas id="dow-chart"></canvas></div>
+        </section>
+
+        <!-- Drinks by type -->
+        <section class="bg-slate-800/50 rounded-2xl p-5">
+          <div class="flex items-center justify-between mb-3">
+            <h2 class="text-lg font-semibold">Drinks by type</h2>
+            <div id="range-type" class="flex gap-2"></div>
+          </div>
+          <div class="h-64"><canvas id="type-chart"></canvas></div>
+        </section>
+
+        <!-- Alcohol (g) by type per night -->
+        <section class="bg-slate-800/50 rounded-2xl p-5">
+          <div class="flex items-center justify-between mb-3">
+            <h2 class="text-lg font-semibold">Alcohol (g) by type / night</h2>
+            <div id="range-typenight" class="flex gap-2"></div>
+          </div>
+          <div class="h-64"><canvas id="typenight-chart"></canvas></div>
+        </section>
+      </div>
+
+      <p class="mt-6 mb-10 text-xs text-amber-400/90">
+        ⚠️ BAC values are Widmark approximations using population averages and should never be used to decide whether it is safe to drive.
+      </p>
+    </div>
+
+    <script src="/vendor/chart.umd.js"></script>
+    <script type="module" src="/js/client/history.js"></script>
+  </body>
+</html>

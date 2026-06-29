@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>BoozeTracker</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🍺</text></svg>" />
+  </head>
+  <body class="bg-slate-900 text-slate-100 min-h-screen">
+    <div class="max-w-3xl mx-auto px-4 py-6">
+      <!-- Header -->
+      <header class="flex items-center justify-between mb-6">
+        <h1 class="text-2xl font-bold flex items-center gap-2">🍺 BoozeTracker</h1>
+        <nav class="flex gap-2 text-sm">
+          <a href="/" class="px-3 py-1 rounded-md bg-booze-500 text-white font-medium">Tonight</a>
+          <a href="/history.html" class="px-3 py-1 rounded-md bg-slate-700 hover:bg-slate-600">History</a>
+        </nav>
+      </header>
+
+      <!-- Live BAC headline + chart -->
+      <section class="bg-slate-800/50 rounded-2xl p-5 mb-6 shadow">
+        <div class="flex items-baseline justify-between mb-1">
+          <div>
+            <div class="text-sm text-slate-400">Current BAC</div>
+            <div class="text-4xl font-bold"><span id="current-bac">0.000</span><span class="text-xl text-slate-400">%</span></div>
+          </div>
+          <div id="sober-headline" class="text-right text-booze-400 font-medium">You're sober 🎉</div>
+        </div>
+        <div class="h-64 mt-3">
+          <canvas id="live-chart"></canvas>
+        </div>
+        <p class="mt-3 text-xs text-amber-400/90 border-t border-slate-700 pt-3">
+          ⚠️ This BAC estimate is an approximation based on the Widmark formula and population averages.
+          Individual results vary widely. <strong>Never use it to decide whether it is safe to drive.</strong>
+        </p>
+      </section>
+
+      <!-- One-tap drink presets -->
+      <section class="mb-6">
+        <h2 class="text-lg font-semibold mb-3">Log a drink</h2>
+        <div class="mb-3">
+          <div class="mb-2 text-xs text-slate-400">When <span class="text-slate-500">(backdate an earlier drink)</span></div>
+          <div id="time-chips" class="flex flex-wrap gap-2"></div>
+        </div>
+        <div id="drink-presets" class="grid grid-cols-2 sm:grid-cols-4 gap-3"></div>
+      </section>
+
+      <!-- Custom combo -->
+      <section class="bg-slate-800/50 rounded-2xl p-5 mb-6">
+        <h3 class="text-sm font-semibold text-slate-300 mb-3">Custom combo</h3>
+        <div class="mb-2 text-xs text-slate-400">Volume</div>
+        <div id="volume-chips" class="flex flex-wrap gap-2 mb-4"></div>
+        <div class="mb-2 text-xs text-slate-400">ABV</div>
+        <div id="abv-chips" class="flex flex-wrap gap-2 mb-4"></div>
+        <button id="combo-add" disabled class="px-4 py-2 rounded-lg bg-slate-700 text-slate-500 cursor-not-allowed text-sm font-medium">Add drink</button>
+      </section>
+
+      <!-- Recent + undo -->
+      <section class="bg-slate-800/50 rounded-2xl p-5 mb-6">
+        <div class="flex items-center justify-between mb-2">
+          <h3 class="text-sm font-semibold text-slate-300">Recent</h3>
+          <button id="undo-btn" class="text-xs px-3 py-1 rounded-md bg-slate-700 hover:bg-slate-600">↩ Undo last</button>
+        </div>
+        <ul id="recent-list" class="text-sm"></ul>
+      </section>
+
+      <!-- Settings -->
+      <section class="bg-slate-800/50 rounded-2xl p-5 mb-10">
+        <button id="settings-toggle" class="flex items-center gap-2 text-sm font-semibold text-slate-300">
+          ⚙️ Profile &amp; settings
+        </button>
+        <div id="settings-body" class="hidden mt-4 grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <label class="text-sm">
+            <span class="text-slate-400">Body weight (<span id="weight-unit">lb</span>)</span>
+            <input id="weight-input" type="number" min="1" class="mt-1 w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2" />
+          </label>
+          <label class="text-sm">
+            <span class="text-slate-400">Sex (for default r)</span>
+            <select id="sex-input" class="mt-1 w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2">
+              <option value="male">Male</option>
+              <option value="female">Female</option>
+            </select>
+          </label>
+          <label class="text-sm">
+            <span class="text-slate-400">Units</span>
+            <select id="units-input" class="mt-1 w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2">
+              <option value="imperial">Imperial (oz / lb)</option>
+              <option value="metric">Metric (mL / kg)</option>
+            </select>
+          </label>
+          <label class="text-sm">
+            <span class="text-slate-400">r override (optional)</span>
+            <input id="roverride-input" type="number" step="0.01" placeholder="auto" class="mt-1 w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2" />
+          </label>
+          <label class="text-sm">
+            <span class="text-slate-400">Elimination rate β (%/hr)</span>
+            <input id="beta-input" type="number" step="0.001" class="mt-1 w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2" />
+          </label>
+          <label class="text-sm">
+            <span class="text-slate-400">Absorption window (min)</span>
+            <input id="absorption-input" type="number" min="0" class="mt-1 w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2" />
+          </label>
+          <label class="text-sm">
+            <span class="text-slate-400">Night starts at (hour 0–23)</span>
+            <input id="daystart-input" type="number" min="0" max="23" class="mt-1 w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2" />
+          </label>
+        </div>
+      </section>
+    </div>
+
+    <div id="toast" class="fixed bottom-6 left-1/2 -translate-x-1/2 bg-booze-600 text-white px-4 py-2 rounded-lg shadow-lg opacity-0 transition-opacity pointer-events-none"></div>
+
+    <script src="/vendor/chart.umd.js"></script>
+    <script type="module" src="/js/client/main.js"></script>
+  </body>
+</html>
