@@ -4,9 +4,13 @@ import { addEntry, deleteEntry, fetchEntries, fetchProfile, updateProfile } from
 import { Chart, lineChartOptions } from "./charts.js";
 import {
   bacSummary,
+  estimateTimeAtBac,
   sampleBacCurve,
   totalBacAt
 } from "../shared/bac.js";
+
+// US legal driving limit, marked on the projected BAC curve.
+const LEGAL_LIMIT = 0.08;
 import { ABV_PRESETS, DRINK_PRESETS, ML_PER_OZ, VOLUME_PRESETS } from "../shared/presets.js";
 import { DEFAULT_PROFILE, type Entry, type Profile } from "../shared/types.js";
 
@@ -219,9 +223,10 @@ function buildLiveChart(): void {
   // On a marker, combine the BAC at that point with the drink name(s) in a
   // single tooltip; on the curve, just the BAC %.
   options.plugins.tooltip.callbacks.label = (ctx2: {
-    raw?: { drinks?: string[] };
+    raw?: { drinks?: string[]; note?: string };
     parsed: { y: number };
   }) => {
+    if (ctx2.raw && ctx2.raw.note) return ctx2.raw.note;
     const bac = `BAC: ${Number(ctx2.parsed.y).toFixed(3)}%`;
     if (ctx2.raw && ctx2.raw.drinks) return [bac, ...ctx2.raw.drinks];
     return bac;
@@ -312,7 +317,28 @@ function updateLiveChart(): void {
     }
   ];
 
-  // "Now" marker via annotation-free approach: a vertical strip dataset.
+  // Mark when the projected BAC drops back below the 0.08% legal limit.
+  const limitCrossMs = estimateTimeAtBac(entries, profile, now, LEGAL_LIMIT);
+  if (limitCrossMs !== null && limitCrossMs <= end) {
+    const clock = new Date(limitCrossMs).toLocaleTimeString([], {
+      hour: "2-digit",
+      minute: "2-digit"
+    });
+    liveChart.data.datasets.push({
+      label: "0.08% limit",
+      type: "scatter",
+      data: [{ x: limitCrossMs, y: LEGAL_LIMIT, note: `Below 0.08% at ~${clock}` }],
+      backgroundColor: "#ef4444",
+      borderColor: "#fee2e2",
+      borderWidth: 2,
+      pointRadius: 7,
+      pointHoverRadius: 9,
+      pointHitRadius: 12,
+      pointStyle: "rectRot",
+      showLine: false
+    });
+  }
+
   liveChart.options.scales.x.min = start;
   liveChart.options.scales.x.max = end;
   liveChart.update("none");

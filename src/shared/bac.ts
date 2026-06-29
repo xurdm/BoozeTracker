@@ -148,23 +148,28 @@ export function sampleBacCurve(
 }
 
 /**
- * Estimate the absolute time (epoch ms) at which BAC returns to ~0, searching
- * forward from `fromMs`. Returns `fromMs` if already sober. The search walks
- * forward in coarse steps then refines, since the curve is monotonic once all
- * drinks are fully absorbed.
+ * Estimate the absolute time (epoch ms) at which BAC falls to `target`%,
+ * searching forward from `fromMs`. Returns `null` if BAC is already at or
+ * below `target`. The search expands an upper bound then binary-searches the
+ * crossing, since the curve is monotonic once all drinks are fully absorbed.
  */
-export function estimateSoberTime(entries: Entry[], profile: Profile, fromMs: number): number {
+export function estimateTimeAtBac(
+  entries: Entry[],
+  profile: Profile,
+  fromMs: number,
+  target: number
+): number | null {
   const current = totalBacAt(entries, profile, fromMs);
-  if (current <= 0) return fromMs;
+  if (current <= target) return null;
 
-  // Upper bound: current BAC fully eliminated, plus the absorption window for
+  // Upper bound: BAC above target eliminated, plus the absorption window for
   // any not-yet-absorbed drinks. Add a generous margin.
-  const hoursToZero = current / profile.betaRate;
-  let hi = fromMs + (hoursToZero + profile.absorptionMinutes / 60 + 1) * 3_600_000;
+  const hoursToTarget = (current - target) / profile.betaRate;
+  let hi = fromMs + (hoursToTarget + profile.absorptionMinutes / 60 + 1) * 3_600_000;
 
-  // Expand if (due to still-absorbing drinks) BAC isn't zero yet at hi.
+  // Expand if (due to still-absorbing drinks) BAC isn't below target yet at hi.
   let guard = 0;
-  while (totalBacAt(entries, profile, hi) > 0 && guard < 100) {
+  while (totalBacAt(entries, profile, hi) > target && guard < 100) {
     hi += 3_600_000;
     guard++;
   }
@@ -173,13 +178,21 @@ export function estimateSoberTime(entries: Entry[], profile: Profile, fromMs: nu
   let lo = fromMs;
   for (let i = 0; i < 60; i++) {
     const mid = (lo + hi) / 2;
-    if (totalBacAt(entries, profile, mid) > 0.0001) {
+    if (totalBacAt(entries, profile, mid) > target) {
       lo = mid;
     } else {
       hi = mid;
     }
   }
   return hi;
+}
+
+/**
+ * Estimate the absolute time (epoch ms) at which BAC returns to ~0. Returns
+ * `fromMs` if already sober.
+ */
+export function estimateSoberTime(entries: Entry[], profile: Profile, fromMs: number): number {
+  return estimateTimeAtBac(entries, profile, fromMs, 0.0001) ?? fromMs;
 }
 
 export interface BacSummary {

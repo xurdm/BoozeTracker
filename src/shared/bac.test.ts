@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   bacSummary,
   estimateSoberTime,
+  estimateTimeAtBac,
   gramsOfAlcohol,
   groupByNight,
   nightKey,
@@ -123,6 +124,26 @@ describe("estimateSoberTime", () => {
     const sober = estimateSoberTime([e], maleProfile, now);
     expect(sober).toBeGreaterThan(now);
     expect(totalBacAt([e], maleProfile, sober)).toBeLessThan(0.001);
+  });
+});
+
+describe("estimateTimeAtBac", () => {
+  it("returns null when already below the target", () => {
+    const e = entryAt("2026-01-01T20:00:00Z", 355, 5);
+    // A single standard drink never reaches 0.08%.
+    const at = Date.parse("2026-01-01T21:00:00Z");
+    expect(estimateTimeAtBac([e], maleProfile, at, 0.08)).toBeNull();
+  });
+
+  it("finds the descending crossing of a threshold", () => {
+    // Enough drinks to clear 0.08%.
+    const ts = "2026-01-01T20:00:00Z";
+    const drinks = Array.from({ length: 8 }, (_, i) => ({ ...entryAt(ts, 355, 5), id: `d${i}` }));
+    const at = Date.parse("2026-01-01T21:00:00Z");
+    const cross = estimateTimeAtBac(drinks, maleProfile, at, 0.08);
+    expect(cross).not.toBeNull();
+    expect(totalBacAt(drinks, maleProfile, cross as number)).toBeCloseTo(0.08, 3);
+    expect(cross as number).toBeGreaterThan(at);
   });
 });
 
