@@ -66,6 +66,51 @@ describe("totalBacAt", () => {
   });
 });
 
+describe("elimination is zero-order (shared, not per-drink)", () => {
+  it("declines at ~beta total regardless of drink count", () => {
+    // Five identical drinks at the same instant.
+    const ts = "2026-01-01T20:00:00Z";
+    const drinks = Array.from({ length: 5 }, (_, i) => ({
+      ...entryAt(ts, 355, 5),
+      id: `d${i}`
+    }));
+    // Well after absorption completes, the curve should drop by ~beta per hour.
+    const t1 = Date.parse("2026-01-01T22:00:00Z");
+    const t2 = Date.parse("2026-01-01T23:00:00Z");
+    const b1 = totalBacAt(drinks, maleProfile, t1);
+    const b2 = totalBacAt(drinks, maleProfile, t2);
+    expect(b1 - b2).toBeCloseTo(maleProfile.betaRate, 3);
+  });
+
+  it("sober time scales with total alcohol, not number of drinks", () => {
+    const ts = "2026-01-01T20:00:00Z";
+    const tsMs = Date.parse(ts);
+    const after = tsMs + 60 * 60_000; // 1h later, fully absorbed, still drunk
+    const one = [entryAt(ts, 355, 5)];
+    const four = Array.from({ length: 4 }, (_, i) => ({ ...entryAt(ts, 355, 5), id: `d${i}` }));
+    const soberOne = estimateSoberTime(one, maleProfile, after) - tsMs;
+    const soberFour = estimateSoberTime(four, maleProfile, after) - tsMs;
+    // 4x the alcohol should take roughly 4x as long to clear (not the same).
+    expect(soberFour / soberOne).toBeGreaterThan(3.5);
+  });
+});
+
+describe("sober gaps between sessions reset BAC", () => {
+  it("returns to zero between two distant drinks", () => {
+    const night1 = entryAt("2026-01-01T20:00:00Z", 355, 5);
+    const night2 = entryAt("2026-01-02T20:00:00Z", 355, 5);
+    const entries = [night1, night2];
+    // Mid-day between sessions: should be fully sober.
+    expect(totalBacAt(entries, maleProfile, Date.parse("2026-01-02T12:00:00Z"))).toBe(0);
+    // Shortly after the second drink: should reflect a fresh single drink, not
+    // be wiped out by a day's worth of accumulated elimination.
+    const after2 = totalBacAt(entries, maleProfile, Date.parse("2026-01-02T20:45:00Z"));
+    const fresh = totalBacAt([night2], maleProfile, Date.parse("2026-01-02T20:45:00Z"));
+    expect(after2).toBeCloseTo(fresh, 5);
+    expect(after2).toBeGreaterThan(0);
+  });
+});
+
 describe("estimateSoberTime", () => {
   it("returns now when already sober", () => {
     const now = Date.now();

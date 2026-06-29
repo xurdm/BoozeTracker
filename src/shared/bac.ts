@@ -46,29 +46,77 @@ function absorbedFraction(elapsedMs: number, absorptionMinutes: number): number 
   return Math.min(1, elapsedMs / windowMs);
 }
 
-/**
- * BAC (%) contributed by a single entry at absolute time `atMs`, accounting
- * for linear absorption and linear elimination. Never returns below 0.
- */
-export function entryBacAt(entry: Entry, profile: Profile, atMs: number): number {
+/** Absorbed BAC (%) a single entry has contributed by `atMs`, ignoring
+ *  elimination. Absorption stacks across drinks; elimination does not. */
+export function entryAbsorbedBacAt(entry: Entry, profile: Profile, atMs: number): number {
   const startMs = new Date(entry.timestamp).getTime();
   const elapsedMs = atMs - startMs;
   if (elapsedMs <= 0) return 0;
-
   const peak = peakBacContribution(entry.gramsAlcohol, profile);
-  const absorbed = absorbedFraction(elapsedMs, profile.absorptionMinutes) * peak;
-
-  const elapsedHours = elapsedMs / 3_600_000;
-  const eliminated = profile.betaRate * elapsedHours;
-
-  return Math.max(0, absorbed - eliminated);
+  return absorbedFraction(elapsedMs, profile.absorptionMinutes) * peak;
 }
 
-/** Total BAC (%) across all entries at a given absolute time. */
+/**
+ * Total BAC (%) across all entries at a given absolute time.
+ *
+ * Alcohol elimination is zero-order: the body clears at a roughly constant
+ * rate (beta %/hr) regardless of how many drinks are present. We therefore
+ * integrate one shared elimination — not one per drink — and floor BAC at 0
+ * within each segment so that sober gaps between sessions reset correctly
+ * (important for multi-night history). Absorption, by contrast, accumulates
+ * across all drinks.
+ */
 export function totalBacAt(entries: Entry[], profile: Profile, atMs: number): number {
-  let sum = 0;
-  for (const e of entries) sum += entryBacAt(e, profile, atMs);
-  return sum;
+  if (entries.length === 0) return 0;
+
+  const windowMs = Math.max(0, profile.absorptionMinutes) * 60_000;
+  const betaPerMs = profile.betaRate / 3_600_000;
+
+  const drinks = entries
+    .map((e) => ({
+      start: new Date(e.timestamp).getTime(),
+      peak: peakBacContribution(e.gramsAlcohol, profile)
+    }))
+    .filter((d) => d.start <= atMs)
+    .sort((a, b) => a.start - b.start);
+
+  if (drinks.length === 0) return 0;
+  const firstStart = drinks[0].start;
+
+  // Breakpoints where the absorption slope changes: each drink's start and the
+  // end of its absorption window. BAC is piecewise-linear between these.
+  const breaks = new Set<number>([firstStart, atMs]);
+  for (const d of drinks) {
+    if (d.start <= atMs) breaks.add(d.start);
+    if (windowMs > 0 && d.start + windowMs <= atMs) breaks.add(d.start + windowMs);
+  }
+  const times = [...breaks].filter((t) => t >= firstStart && t <= atMs).sort((a, b) => a - b);
+
+  let bac = 0;
+  for (let i = 0; i < times.length; i++) {
+    const t = times[i];
+
+    // Instantaneous absorption (window = 0): add the full peak at the start.
+    if (windowMs === 0) {
+      for (const d of drinks) if (d.start === t) bac += d.peak;
+    }
+
+    if (i + 1 < times.length) {
+      const dt = times[i + 1] - t;
+      // Absorption rate is constant within a segment (breakpoints fall exactly
+      // on window edges), so sum the active drinks' ramp rates.
+      let absRate = 0;
+      if (windowMs > 0) {
+        for (const d of drinks) {
+          if (t >= d.start && t < d.start + windowMs) absRate += d.peak / windowMs;
+        }
+      }
+      const netRate = absRate - betaPerMs;
+      bac = Math.max(0, bac + netRate * dt);
+    }
+  }
+
+  return Math.max(0, bac);
 }
 
 export interface BacPoint {

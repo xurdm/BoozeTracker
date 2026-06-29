@@ -40,6 +40,18 @@ function formatDuration(ms: number): string {
   return `${h}h ${m}m`;
 }
 
+// Compact "how long ago" label, e.g. "just now", "10m ago", "1h ago", "2d ago".
+function formatRelative(timestamp: string, nowMs: number): string {
+  const diffMs = nowMs - new Date(timestamp).getTime();
+  if (diffMs < 60_000) return "just now";
+  const min = Math.floor(diffMs / 60_000);
+  if (min < 60) return `${min}m ago`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr}h ago`;
+  const days = Math.floor(hr / 24);
+  return `${days}d ago`;
+}
+
 function toast(msg: string): void {
   const el = $("toast");
   el.textContent = msg;
@@ -387,9 +399,10 @@ function renderRecent(): void {
       hour: "2-digit",
       minute: "2-digit"
     });
+    const ago = formatRelative(e.timestamp, Date.now());
     li.innerHTML = `
       <span class="text-sm text-slate-200">${e.label ?? `${formatVolume(e.volumeMl)} @ ${e.abv}%`}</span>
-      <span class="text-xs text-slate-500">${time}</span>`;
+      <span class="text-xs text-slate-500">${ago} · ${time}</span>`;
     list.appendChild(li);
   }
 }
