@@ -1,7 +1,7 @@
 // History page: several charts over historical data, each filterable by a
 // Day/Week/Month/All range control.
 
-import { fetchEntries, fetchProfile } from "./api.js";
+import { deleteEntry, fetchEntries, fetchProfile } from "./api.js";
 import {
   barChartOptions,
   buildRangeControls,
@@ -56,15 +56,29 @@ let bacChart: ChartInstance | null = null;
 const bacSpanRef = { value: 24 * 3_600_000 };
 
 function renderBacOverTime(range: RangeKey): void {
-  const data = filterByRange(range);
-  const times = data.map((e) => new Date(e.timestamp).getTime());
+  // The range controls only the visible window. BAC must be computed from ALL
+  // entries — drinks before the window still contribute residual BAC inside it,
+  // so filtering the entry set would truncate sessions and drop to 0 too early.
   const now = Date.now();
-  const start = times.length ? Math.min(...times) : now - 24 * 3_600_000;
-  const end = times.length ? Math.max(...times) + 12 * 3_600_000 : now;
+  const span = rangeMs(range);
+  const times = entries.map((e) => new Date(e.timestamp).getTime());
+
+  let start: number;
+  let end: number;
+  if (span === null) {
+    // "All": span the full history plus a tail for the final decline.
+    start = times.length ? Math.min(...times) : now - 24 * 3_600_000;
+    end = times.length ? Math.max(...times) + 12 * 3_600_000 : now;
+  } else {
+    start = now - span;
+    // Extend the end a little past now/last drink so the decline to 0 is shown.
+    const lastDrink = times.length ? Math.max(...times) : now;
+    end = Math.max(now, Math.min(lastDrink + 12 * 3_600_000, now + 12 * 3_600_000));
+  }
   bacSpanRef.value = end - start;
 
   const step = Math.max(5 * 60_000, Math.round((end - start) / 500));
-  const points = sampleBacCurve(data, profile, start, end, step).map((p) => ({
+  const points = sampleBacCurve(entries, profile, start, end, step).map((p) => ({
     x: p.t,
     y: p.bac
   }));
@@ -299,16 +313,95 @@ function renderGramsByTypePerNight(range: RangeKey): void {
   }
 }
 
+// --- full entry history --------------------------------------------------
+
+function renderEntriesList(): void {
+  const list = $("entries-list");
+  const count = $("entries-count");
+  list.innerHTML = "";
+
+  if (entries.length === 0) {
+    list.innerHTML = `<li class="text-slate-500 text-sm">No entries yet.</li>`;
+    count.textContent = "";
+    return;
+  }
+  count.textContent = `${entries.length} total`;
+
+  // Newest night first; entries within a night newest first.
+  const groups = groupByNight(entries, profile.dayStartHour).reverse();
+  for (const g of groups) {
+    const header = document.createElement("li");
+    header.className = "mt-4 mb-1 text-xs uppercase tracking-wide text-slate-500";
+    const nightDate = new Date(`${g.key}T12:00:00`).toLocaleDateString([], {
+      weekday: "short",
+      month: "short",
+      day: "numeric"
+    });
+    header.textContent = `${nightDate} · ${g.entries.length} drink${g.entries.length === 1 ? "" : "s"}`;
+    list.appendChild(header);
+
+    const sorted = [...g.entries].sort((a, b) => (a.timestamp < b.timestamp ? 1 : -1));
+    for (const e of sorted) {
+      const li = document.createElement("li");
+      li.className = "flex items-center gap-3 py-2 border-b border-slate-800";
+      const time = new Date(e.timestamp).toLocaleTimeString([], {
+        hour: "2-digit",
+        minute: "2-digit"
+      });
+      const name = e.label ?? `${Math.round(e.volumeMl)} mL @ ${e.abv}%`;
+
+      const del = document.createElement("button");
+      del.className = "text-slate-500 hover:text-red-400 text-sm shrink-0";
+      del.title = "Delete this entry";
+      del.textContent = "🗑";
+      del.addEventListener("click", () => removeHistoryEntry(e.id));
+
+      const label = document.createElement("span");
+      label.className = "text-sm text-slate-200 flex-1";
+      label.textContent = name;
+
+      const meta = document.createElement("span");
+      meta.className = "text-xs text-slate-500 shrink-0";
+      meta.textContent = `${e.gramsAlcohol.toFixed(1)} g · ${time}`;
+
+      li.append(del, label, meta);
+      list.appendChild(li);
+    }
+  }
+}
+
+async function removeHistoryEntry(id: string): Promise<void> {
+  try {
+    const res = await deleteEntry(id);
+    entries = res.entries;
+    rerenderAll();
+  } catch {
+    // ignore; the list will simply stay as-is
+  }
+}
+
 // --- wiring --------------------------------------------------------------
 
-function renderAll(range: RangeKey): void {
-  renderBacOverTime(range);
-  renderDrinksPerNight(range);
-  renderPeakBac(range);
-  renderGramsPerNight(range);
-  renderByDayOfWeek(range);
-  renderDrinksByType(range);
-  renderGramsByTypePerNight(range);
+// Track each chart's current range so a delete can re-render everything in place.
+const current = {
+  bac: "week" as RangeKey,
+  drinks: "week" as RangeKey,
+  peak: "week" as RangeKey,
+  grams: "week" as RangeKey,
+  dow: "all" as RangeKey,
+  type: "week" as RangeKey,
+  typenight: "week" as RangeKey
+};
+
+function rerenderAll(): void {
+  renderBacOverTime(current.bac);
+  renderDrinksPerNight(current.drinks);
+  renderPeakBac(current.peak);
+  renderGramsPerNight(current.grams);
+  renderByDayOfWeek(current.dow);
+  renderDrinksByType(current.type);
+  renderGramsByTypePerNight(current.typenight);
+  renderEntriesList();
 }
 
 async function init(): Promise<void> {
@@ -318,18 +411,22 @@ async function init(): Promise<void> {
     // Leave defaults; charts will simply be empty.
   }
 
-  const initial: RangeKey = "week";
-  // Independent range control per chart so each can be explored separately.
-  buildRangeControls($("range-bac"), initial, renderBacOverTime);
-  buildRangeControls($("range-drinks"), initial, renderDrinksPerNight);
-  buildRangeControls($("range-peak"), initial, renderPeakBac);
-  buildRangeControls($("range-grams"), initial, renderGramsPerNight);
-  buildRangeControls($("range-dow"), "all", renderByDayOfWeek);
-  buildRangeControls($("range-type"), initial, renderDrinksByType);
-  buildRangeControls($("range-typenight"), initial, renderGramsByTypePerNight);
+  // Each control updates its stored range then re-renders its own chart.
+  const bind = (id: string, key: keyof typeof current, fn: (r: RangeKey) => void) =>
+    buildRangeControls($(`range-${id}`), current[key], (r) => {
+      current[key] = r;
+      fn(r);
+    });
 
-  renderAll(initial);
-  renderByDayOfWeek("all");
+  bind("bac", "bac", renderBacOverTime);
+  bind("drinks", "drinks", renderDrinksPerNight);
+  bind("peak", "peak", renderPeakBac);
+  bind("grams", "grams", renderGramsPerNight);
+  bind("dow", "dow", renderByDayOfWeek);
+  bind("type", "type", renderDrinksByType);
+  bind("typenight", "typenight", renderGramsByTypePerNight);
+
+  rerenderAll();
 }
 
 init();

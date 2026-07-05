@@ -2,7 +2,7 @@
   "name": "boozetracker",
   "version": "1.0.0",
   "description": "A personal alcohol consumption and BAC tracker",
-  "main": "dist/server/index.js",
+  "main": "dist/electron/main.js",
   "type": "commonjs",
   "scripts": {
     "build:server": "tsc -p tsconfig.server.json",
@@ -14,7 +14,40 @@
     "dev:client": "tsc -p tsconfig.client.json --watch",
     "dev:css": "tailwindcss -i ./src/styles/tailwind.css -o ./public/styles.css --watch",
     "start": "node dist/server/index.js",
+    "electron": "electron .",
+    "app": "npm run build && electron .",
+    "dist": "npm run build && electron-builder --win portable",
+    "dist:installer": "npm run build && electron-builder --win nsis",
     "test": "vitest run"
+  },
+  "build": {
+    "appId": "com.boozetracker.app",
+    "productName": "BoozeTracker",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "!src/**",
+      "!data/**",
+      "!logs/**",
+      "!release/**",
+      "!scripts/**",
+      "!**/*.md",
+      "!tsconfig*.json",
+      "!tailwind.config.js",
+      "!ecosystem.config.js",
+      "!vitest.config.ts",
+      "!.nvmrc"
+    ],
+    "asarUnpack": [
+      "public/**/*"
+    ],
+    "win": {
+      "target": "portable"
+    },
+    "portable": {
+      "artifactName": "BoozeTracker.exe"
+    }
   },
   "keywords": [],
   "author": "",
@@ -26,9 +59,14 @@
   "devDependencies": {
     "@types/express": "^4.17.21",
     "@types/node": "^22.0.0",
+    "electron": "^43.0.0",
+    "electron-builder": "^26.15.3",
     "tailwindcss": "^3.4.0",
     "tsx": "^4.16.0",
     "typescript": "^5.5.0",
     "vitest": "^4.1.9"
+  },
+  "allowScripts": {
+    "electron@43.0.0": true
   }
 }

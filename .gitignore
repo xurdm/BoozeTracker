@@ -1,5 +1,6 @@
 node_modules/
 dist/
+release/
 public/js/
 public/styles.css
 public/vendor/
@@ -8,3 +9,4 @@ data/*
 *.log
 .env
 .DS_Store
+hosting.md

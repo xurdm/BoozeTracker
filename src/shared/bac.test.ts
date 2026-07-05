@@ -6,6 +6,7 @@ import {
   gramsOfAlcohol,
   groupByNight,
   nightKey,
+  nightWindow,
   peakBacContribution,
   totalBacAt,
   widmarkR
@@ -168,6 +169,32 @@ describe("categorizeDrink", () => {
     expect(categorizeDrink(undefined, 40)).toBe("Liquor");
     expect(categorizeDrink("355 mL @ 5%", 5)).toBe("Beer");
     expect(categorizeDrink("148 mL @ 12%", 12)).toBe("Wine");
+  });
+});
+
+describe("nightWindow (8 PM → noon next day)", () => {
+  it("an 11 PM moment maps to tonight 8 PM → tomorrow noon", () => {
+    const now = new Date(2026, 0, 1, 23, 0, 0); // Jan 1, 11 PM local
+    const { startMs, endMs } = nightWindow(now.getTime(), 20, 12);
+    expect(new Date(startMs).getHours()).toBe(20);
+    expect(new Date(startMs).getDate()).toBe(1);
+    expect(new Date(endMs).getHours()).toBe(12);
+    expect(new Date(endMs).getDate()).toBe(2);
+  });
+
+  it("a 2 AM moment still belongs to the previous evening's night", () => {
+    const now = new Date(2026, 0, 2, 2, 0, 0); // Jan 2, 2 AM local
+    const { startMs } = nightWindow(now.getTime(), 20, 12);
+    expect(new Date(startMs).getDate()).toBe(1); // night began Jan 1 at 8 PM
+    expect(new Date(startMs).getHours()).toBe(20);
+  });
+
+  it("a daytime-gap moment returns the most recently ended night", () => {
+    const now = new Date(2026, 0, 2, 15, 0, 0); // Jan 2, 3 PM (after noon end)
+    const { startMs, endMs } = nightWindow(now.getTime(), 20, 12);
+    expect(new Date(startMs).getDate()).toBe(1); // last night: Jan 1 8 PM
+    expect(new Date(endMs).getDate()).toBe(2); // ...ended Jan 2 noon
+    expect(now.getTime()).toBeGreaterThan(endMs);
   });
 });
 

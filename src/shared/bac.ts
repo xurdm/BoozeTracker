@@ -229,6 +229,31 @@ export function nightKey(timestamp: string, dayStartHour: number): string {
   return `${y}-${m}-${day}`;
 }
 
+/**
+ * Compute the [start, end] window (epoch ms, local time) of the night that
+ * `nowMs` belongs to. A night begins at `startHour` and ends at `endHour` the
+ * following day (e.g. 20 → 12 means 8 PM to noon next day). Between a night's
+ * end and the next night's start there is a daytime gap; if `nowMs` falls in
+ * that gap, the most recently ended night is returned.
+ */
+export function nightWindow(
+  nowMs: number,
+  startHour: number,
+  endHour: number
+): { startMs: number; endMs: number } {
+  const now = new Date(nowMs);
+  const start = new Date(now);
+  start.setHours(startHour, 0, 0, 0);
+  // If we're before tonight's start, the relevant night began the day before.
+  if (now.getTime() < start.getTime()) {
+    start.setDate(start.getDate() - 1);
+  }
+  const end = new Date(start);
+  end.setDate(end.getDate() + 1);
+  end.setHours(endHour, 0, 0, 0);
+  return { startMs: start.getTime(), endMs: end.getTime() };
+}
+
 export interface NightGroup {
   key: string; // YYYY-MM-DD
   entries: Entry[];

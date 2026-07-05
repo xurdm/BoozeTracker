@@ -40,5 +40,5 @@ export const DEFAULT_PROFILE: Profile = {
   units: "imperial",
   betaRate: 0.015,
   absorptionMinutes: 30,
-  dayStartHour: 4
+  dayStartHour: 20
 };

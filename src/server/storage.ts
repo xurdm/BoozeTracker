@@ -6,12 +6,17 @@ import { promises as fs } from "fs";
 import * as path from "path";
 import { DEFAULT_PROFILE, type Entry, type Profile } from "../shared/types";
 
-const DATA_DIR = path.join(__dirname, "..", "..", "data");
-const PROFILE_PATH = path.join(DATA_DIR, "profile.json");
-const ENTRIES_PATH = path.join(DATA_DIR, "entries.json");
+// Resolved lazily so the Electron shell can point BOOZETRACKER_DATA_DIR at a
+// writable location (userData) — the bundled asar is read-only. Falls back to
+// the project's data/ folder for `npm start` / PM2.
+function dataDir(): string {
+  return process.env.BOOZETRACKER_DATA_DIR || path.join(__dirname, "..", "..", "data");
+}
+const PROFILE_PATH = (): string => path.join(dataDir(), "profile.json");
+const ENTRIES_PATH = (): string => path.join(dataDir(), "entries.json");
 
 async function ensureDataDir(): Promise<void> {
-  await fs.mkdir(DATA_DIR, { recursive: true });
+  await fs.mkdir(dataDir(), { recursive: true });
 }
 
 async function writeAtomic(filePath: string, data: unknown): Promise<void> {
@@ -32,23 +37,23 @@ async function readJson<T>(filePath: string, fallback: T): Promise<T> {
 }
 
 export async function getProfile(): Promise<Profile> {
-  const stored = await readJson<Partial<Profile>>(PROFILE_PATH, {});
+  const stored = await readJson<Partial<Profile>>(PROFILE_PATH(), {});
   // Merge with defaults so older/partial files gain new fields gracefully.
   return { ...DEFAULT_PROFILE, ...stored };
 }
 
 export async function saveProfile(profile: Profile): Promise<Profile> {
   const merged: Profile = { ...DEFAULT_PROFILE, ...profile };
-  await writeAtomic(PROFILE_PATH, merged);
+  await writeAtomic(PROFILE_PATH(), merged);
   return merged;
 }
 
 export async function getEntries(): Promise<Entry[]> {
-  return readJson<Entry[]>(ENTRIES_PATH, []);
+  return readJson<Entry[]>(ENTRIES_PATH(), []);
 }
 
 export async function saveEntries(entries: Entry[]): Promise<void> {
-  await writeAtomic(ENTRIES_PATH, entries);
+  await writeAtomic(ENTRIES_PATH(), entries);
 }
 
 export async function addEntry(entry: Entry): Promise<Entry[]> {

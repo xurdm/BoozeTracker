@@ -94,6 +94,23 @@ app.delete("/api/entries/:id", async (req, res) => {
   res.json({ entries });
 });
 
-app.listen(PORT, () => {
-  console.log(`BoozeTracker running at http://localhost:${PORT}`);
-});
+/**
+ * Start listening. Pass port 0 to let the OS pick a free port (used by the
+ * Electron shell); resolves with the actual bound port.
+ */
+export function startServer(port: number = PORT): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const server = app.listen(port, () => {
+      const address = server.address();
+      const bound = typeof address === "object" && address ? address.port : port;
+      console.log(`BoozeTracker running at http://localhost:${bound}`);
+      resolve(bound);
+    });
+    server.on("error", reject);
+  });
+}
+
+// Auto-start only when run directly (npm start / PM2), not when embedded.
+if (require.main === module) {
+  startServer();
+}

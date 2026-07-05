@@ -5,12 +5,26 @@ import { Chart, lineChartOptions } from "./charts.js";
 import {
   bacSummary,
   estimateTimeAtBac,
+  nightWindow,
   sampleBacCurve,
   totalBacAt
 } from "../shared/bac.js";
 
 // US legal driving limit, marked on the projected BAC curve.
 const LEGAL_LIMIT = 0.08;
+
+// The main page shows a single night: from `dayStartHour` (profile) until this
+// hour the following day. Default: 8 PM → noon next day.
+const NIGHT_END_HOUR = 12;
+
+/** Entries belonging to the night that `nowMs` falls in. */
+function currentNightEntries(nowMs: number): Entry[] {
+  const { startMs, endMs } = nightWindow(nowMs, profile.dayStartHour, NIGHT_END_HOUR);
+  return entries.filter((e) => {
+    const t = new Date(e.timestamp).getTime();
+    return t >= startMs && t <= endMs;
+  });
+}
 import { ABV_PRESETS, DRINK_PRESETS, ML_PER_OZ, VOLUME_PRESETS } from "../shared/presets.js";
 import { DEFAULT_PROFILE, type Entry, type Profile } from "../shared/types.js";
 
@@ -79,7 +93,9 @@ const TIME_PRESETS: Array<{ label: string; minutes: number }> = [
   { label: "1h ago", minutes: 60 },
   { label: "2h ago", minutes: 120 },
   { label: "3h ago", minutes: 180 },
-  { label: "4h ago", minutes: 240 }
+  { label: "4h ago", minutes: 240 },
+  { label: "5h ago", minutes: 300 },
+  { label: "6h ago", minutes: 360 }
 ];
 
 async function logDrink(volumeMl: number, abv: number, label: string): Promise<void> {
@@ -130,13 +146,17 @@ async function undoLast(): Promise<void> {
     return;
   }
   const last = entries.reduce((a, b) => (a.timestamp >= b.timestamp ? a : b));
+  await removeEntry(last.id, last.label ?? "last drink");
+}
+
+async function removeEntry(id: string, label: string): Promise<void> {
   try {
-    const res = await deleteEntry(last.id);
+    const res = await deleteEntry(id);
     entries = res.entries;
-    toast(`Removed ${last.label ?? "last drink"}`);
+    toast(`Removed ${label}`);
     refresh();
   } catch (err) {
-    toast(`Failed to undo: ${(err as Error).message}`);
+    toast(`Failed to remove: ${(err as Error).message}`);
   }
 }
 
@@ -246,9 +266,9 @@ interface DrinkMarker {
 
 // Group consumed drinks into per-minute markers, aggregating repeats with a
 // count (e.g. "Beer 12oz 5% ×2"). Each marker sits on the BAC curve at its time.
-function buildDrinkMarkers(startMs: number, nowMs: number): DrinkMarker[] {
+function buildDrinkMarkers(nightEntries: Entry[], startMs: number, nowMs: number): DrinkMarker[] {
   const buckets = new Map<number, Map<string, number>>();
-  for (const e of entries) {
+  for (const e of nightEntries) {
     const t = new Date(e.timestamp).getTime();
     if (t < startMs || t > nowMs) continue;
     const bucket = Math.round(t / 60_000) * 60_000;
@@ -261,7 +281,7 @@ function buildDrinkMarkers(startMs: number, nowMs: number): DrinkMarker[] {
     .sort((a, b) => a[0] - b[0])
     .map(([bucket, labels]) => ({
       x: bucket,
-      y: totalBacAt(entries, profile, bucket),
+      y: totalBacAt(nightEntries, profile, bucket),
       drinks: [...labels.entries()].map(([name, n]) => (n > 1 ? `🍹 ${name} ×${n}` : `🍹 ${name}`))
     }));
 }
@@ -270,9 +290,12 @@ function updateLiveChart(): void {
   if (!liveChart) return;
   const now = Date.now();
 
-  // Window: from first drink today (or 1h ago) to projected sober time.
-  const summary = bacSummary(entries, profile, now);
-  const recent = entries
+  // Only consider the current night's drinks (8 PM → noon next day by default).
+  const nightEntries = currentNightEntries(now);
+
+  // Window: from first drink tonight (or 1h ago) to projected sober time.
+  const summary = bacSummary(nightEntries, profile, now);
+  const recent = nightEntries
     .map((e) => new Date(e.timestamp).getTime())
     .filter((t) => t <= now);
   const firstDrink = recent.length ? Math.min(...recent) : now - 3_600_000;
@@ -281,8 +304,8 @@ function updateLiveChart(): void {
   spanRef.value = end - start;
 
   const step = Math.max(60_000, Math.round((end - start) / 240));
-  const past = sampleBacCurve(entries, profile, start, now, step).map((p) => ({ x: p.t, y: p.bac }));
-  const future = sampleBacCurve(entries, profile, now, end, step).map((p) => ({ x: p.t, y: p.bac }));
+  const past = sampleBacCurve(nightEntries, profile, start, now, step).map((p) => ({ x: p.t, y: p.bac }));
+  const future = sampleBacCurve(nightEntries, profile, now, end, step).map((p) => ({ x: p.t, y: p.bac }));
 
   liveChart.data.datasets = [
     {
@@ -306,7 +329,7 @@ function updateLiveChart(): void {
     {
       label: "Drinks",
       type: "scatter",
-      data: buildDrinkMarkers(start, now),
+      data: buildDrinkMarkers(nightEntries, start, now),
       backgroundColor: "#f59e0b",
       borderColor: "#1e293b",
       borderWidth: 2,
@@ -318,7 +341,7 @@ function updateLiveChart(): void {
   ];
 
   // Mark when the projected BAC drops back below the 0.08% legal limit.
-  const limitCrossMs = estimateTimeAtBac(entries, profile, now, LEGAL_LIMIT);
+  const limitCrossMs = estimateTimeAtBac(nightEntries, profile, now, LEGAL_LIMIT);
   if (limitCrossMs !== null && limitCrossMs <= end) {
     const clock = new Date(limitCrossMs).toLocaleTimeString([], {
       hour: "2-digit",
@@ -344,7 +367,7 @@ function updateLiveChart(): void {
   liveChart.update("none");
 
   // Headline.
-  const cur = totalBacAt(entries, profile, now);
+  const cur = totalBacAt(nightEntries, profile, now);
   $("current-bac").textContent = cur.toFixed(3);
   const headline = $("sober-headline");
   if (summary.soberAtMs && cur > 0) {
@@ -409,26 +432,40 @@ async function saveSettings(): Promise<void> {
 function renderRecent(): void {
   const list = $("recent-list");
   list.innerHTML = "";
-  const today = [...entries]
-    .sort((a, b) => (a.timestamp < b.timestamp ? 1 : -1))
-    .slice(0, 8);
+  const tonight = currentNightEntries(Date.now()).sort((a, b) =>
+    a.timestamp < b.timestamp ? 1 : -1
+  );
 
-  if (today.length === 0) {
-    list.innerHTML = `<li class="text-slate-500 text-sm">No drinks logged yet.</li>`;
+  if (tonight.length === 0) {
+    list.innerHTML = `<li class="text-slate-500 text-sm">No drinks logged tonight.</li>`;
     return;
   }
 
-  for (const e of today) {
+  for (const e of tonight) {
     const li = document.createElement("li");
-    li.className = "flex items-center justify-between py-2 border-b border-slate-800";
+    li.className = "flex items-center gap-3 py-2 border-b border-slate-800";
     const time = new Date(e.timestamp).toLocaleTimeString([], {
       hour: "2-digit",
       minute: "2-digit"
     });
     const ago = formatRelative(e.timestamp, Date.now());
-    li.innerHTML = `
-      <span class="text-sm text-slate-200">${e.label ?? `${formatVolume(e.volumeMl)} @ ${e.abv}%`}</span>
-      <span class="text-xs text-slate-500">${ago} · ${time}</span>`;
+    const name = e.label ?? `${formatVolume(e.volumeMl)} @ ${e.abv}%`;
+
+    const del = document.createElement("button");
+    del.className = "text-slate-500 hover:text-red-400 text-sm shrink-0";
+    del.title = "Delete this entry";
+    del.textContent = "🗑";
+    del.addEventListener("click", () => removeEntry(e.id, name));
+
+    const label = document.createElement("span");
+    label.className = "text-sm text-slate-200 flex-1";
+    label.textContent = name;
+
+    const when = document.createElement("span");
+    when.className = "text-xs text-slate-500 shrink-0";
+    when.textContent = `${ago} · ${time}`;
+
+    li.append(del, label, when);
     list.appendChild(li);
   }
 }
