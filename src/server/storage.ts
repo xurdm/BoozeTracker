@@ -1,8 +1,10 @@
-// Atomic JSON persistence for the profile and entries. Writes go to a temp
-// file which is then renamed over the target, so a crash mid-write cannot
-// corrupt the existing data.
+// SQLite persistence for the profile and entries, using Node's built-in
+// `node:sqlite` module (no native dependency, so it works identically under
+// plain Node, PM2, and Electron). The public API is unchanged and still async
+// so callers don't need to change, even though the driver is synchronous.
 
-import { promises as fs } from "fs";
+import { DatabaseSync } from "node:sqlite";
+import { existsSync, mkdirSync, readFileSync } from "fs";
 import * as path from "path";
 import { DEFAULT_PROFILE, type Entry, type Profile } from "../shared/types";
 
@@ -12,61 +14,204 @@ import { DEFAULT_PROFILE, type Entry, type Profile } from "../shared/types";
 function dataDir(): string {
   return process.env.BOOZETRACKER_DATA_DIR || path.join(__dirname, "..", "..", "data");
 }
-const PROFILE_PATH = (): string => path.join(dataDir(), "profile.json");
-const ENTRIES_PATH = (): string => path.join(dataDir(), "entries.json");
-
-async function ensureDataDir(): Promise<void> {
-  await fs.mkdir(dataDir(), { recursive: true });
+function dbFile(): string {
+  return path.join(dataDir(), "boozetracker.db");
 }
 
-async function writeAtomic(filePath: string, data: unknown): Promise<void> {
-  await ensureDataDir();
-  const tmp = `${filePath}.${process.pid}.${Date.now()}.tmp`;
-  await fs.writeFile(tmp, JSON.stringify(data, null, 2), "utf8");
-  await fs.rename(tmp, filePath);
+let db: DatabaseSync | null = null;
+let openedPath: string | null = null;
+
+/** Open (once) and return the database, creating the schema on first use. */
+function getDb(): DatabaseSync {
+  const file = dbFile();
+  if (db && openedPath === file) return db;
+
+  const dir = dataDir();
+  mkdirSync(dir, { recursive: true });
+
+  db = new DatabaseSync(file);
+  db.exec("PRAGMA journal_mode = WAL;");
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS entries (
+      id           TEXT PRIMARY KEY,
+      timestamp    TEXT NOT NULL,
+      volumeMl     REAL NOT NULL,
+      abv          REAL NOT NULL,
+      label        TEXT,
+      gramsAlcohol REAL NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_entries_timestamp ON entries(timestamp);
+    CREATE TABLE IF NOT EXISTS profile (
+      id                INTEGER PRIMARY KEY CHECK (id = 1),
+      weightKg          REAL,
+      sex               TEXT,
+      units             TEXT,
+      rOverride         REAL,
+      betaRate          REAL,
+      absorptionMinutes REAL,
+      dayStartHour      INTEGER
+    );
+  `);
+
+  migrateFromJson(db, dir);
+  openedPath = file;
+  return db;
 }
 
-async function readJson<T>(filePath: string, fallback: T): Promise<T> {
-  try {
-    const raw = await fs.readFile(filePath, "utf8");
-    return JSON.parse(raw) as T;
-  } catch (err: unknown) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") return fallback;
-    throw err;
+/**
+ * One-time import of legacy JSON files (entries.json / profile.json) if they
+ * exist and the corresponding table is still empty. Preserves data logged
+ * before the switch to SQLite; safe to run on every open.
+ */
+function migrateFromJson(database: DatabaseSync, dir: string): void {
+  const entryCount = (
+    database.prepare("SELECT COUNT(*) AS n FROM entries").get() as { n: number }
+  ).n;
+  if (entryCount === 0) {
+    const file = path.join(dir, "entries.json");
+    if (existsSync(file)) {
+      try {
+        const rows = JSON.parse(readFileSync(file, "utf8")) as Entry[];
+        const insert = database.prepare(
+          `INSERT OR IGNORE INTO entries (id, timestamp, volumeMl, abv, label, gramsAlcohol)
+           VALUES (?, ?, ?, ?, ?, ?)`
+        );
+        for (const e of rows) {
+          insert.run(e.id, e.timestamp, e.volumeMl, e.abv, e.label ?? null, e.gramsAlcohol);
+        }
+      } catch {
+        // Corrupt/partial legacy file — skip rather than block startup.
+      }
+    }
+  }
+
+  const hasProfile = database.prepare("SELECT 1 FROM profile WHERE id = 1").get();
+  if (!hasProfile) {
+    const file = path.join(dir, "profile.json");
+    if (existsSync(file)) {
+      try {
+        const p = { ...DEFAULT_PROFILE, ...JSON.parse(readFileSync(file, "utf8")) } as Profile;
+        writeProfileRow(database, p);
+      } catch {
+        // Skip a bad legacy profile file; defaults will be used.
+      }
+    }
   }
 }
 
+function writeProfileRow(database: DatabaseSync, p: Profile): void {
+  database
+    .prepare(
+      `INSERT INTO profile (id, weightKg, sex, units, rOverride, betaRate, absorptionMinutes, dayStartHour)
+       VALUES (1, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET
+         weightKg = excluded.weightKg,
+         sex = excluded.sex,
+         units = excluded.units,
+         rOverride = excluded.rOverride,
+         betaRate = excluded.betaRate,
+         absorptionMinutes = excluded.absorptionMinutes,
+         dayStartHour = excluded.dayStartHour`
+    )
+    .run(
+      p.weightKg,
+      p.sex,
+      p.units,
+      p.rOverride ?? null,
+      p.betaRate,
+      p.absorptionMinutes,
+      p.dayStartHour
+    );
+}
+
+interface EntryRow {
+  id: string;
+  timestamp: string;
+  volumeMl: number;
+  abv: number;
+  label: string | null;
+  gramsAlcohol: number;
+}
+
+function rowToEntry(r: EntryRow): Entry {
+  const entry: Entry = {
+    id: r.id,
+    timestamp: r.timestamp,
+    volumeMl: r.volumeMl,
+    abv: r.abv,
+    gramsAlcohol: r.gramsAlcohol
+  };
+  if (r.label != null) entry.label = r.label;
+  return entry;
+}
+
+// --- Profile -------------------------------------------------------------
+
 export async function getProfile(): Promise<Profile> {
-  const stored = await readJson<Partial<Profile>>(PROFILE_PATH(), {});
-  // Merge with defaults so older/partial files gain new fields gracefully.
-  return { ...DEFAULT_PROFILE, ...stored };
+  const row = getDb().prepare("SELECT * FROM profile WHERE id = 1").get() as
+    | (Profile & { id: number; rOverride: number | null })
+    | undefined;
+  if (!row) return { ...DEFAULT_PROFILE };
+  const { id: _id, rOverride, ...rest } = row;
+  void _id;
+  const profile: Profile = { ...DEFAULT_PROFILE, ...rest };
+  if (rOverride != null) profile.rOverride = rOverride;
+  else delete profile.rOverride;
+  return profile;
 }
 
 export async function saveProfile(profile: Profile): Promise<Profile> {
   const merged: Profile = { ...DEFAULT_PROFILE, ...profile };
-  await writeAtomic(PROFILE_PATH(), merged);
+  writeProfileRow(getDb(), merged);
   return merged;
 }
 
+// --- Entries -------------------------------------------------------------
+
 export async function getEntries(): Promise<Entry[]> {
-  return readJson<Entry[]>(ENTRIES_PATH(), []);
+  const rows = getDb()
+    .prepare("SELECT * FROM entries ORDER BY timestamp ASC")
+    .all() as unknown as EntryRow[];
+  return rows.map(rowToEntry);
 }
 
 export async function saveEntries(entries: Entry[]): Promise<void> {
-  await writeAtomic(ENTRIES_PATH(), entries);
+  const database = getDb();
+  database.exec("BEGIN");
+  try {
+    database.exec("DELETE FROM entries");
+    const insert = database.prepare(
+      `INSERT INTO entries (id, timestamp, volumeMl, abv, label, gramsAlcohol)
+       VALUES (?, ?, ?, ?, ?, ?)`
+    );
+    for (const e of entries) {
+      insert.run(e.id, e.timestamp, e.volumeMl, e.abv, e.label ?? null, e.gramsAlcohol);
+    }
+    database.exec("COMMIT");
+  } catch (err) {
+    database.exec("ROLLBACK");
+    throw err;
+  }
 }
 
 export async function addEntry(entry: Entry): Promise<Entry[]> {
-  const entries = await getEntries();
-  entries.push(entry);
-  entries.sort((a, b) => (a.timestamp < b.timestamp ? -1 : 1));
-  await saveEntries(entries);
-  return entries;
+  getDb()
+    .prepare(
+      `INSERT INTO entries (id, timestamp, volumeMl, abv, label, gramsAlcohol)
+       VALUES (?, ?, ?, ?, ?, ?)`
+    )
+    .run(
+      entry.id,
+      entry.timestamp,
+      entry.volumeMl,
+      entry.abv,
+      entry.label ?? null,
+      entry.gramsAlcohol
+    );
+  return getEntries();
 }
 
 export async function deleteEntry(id: string): Promise<Entry[]> {
-  const entries = await getEntries();
-  const filtered = entries.filter((e) => e.id !== id);
-  await saveEntries(filtered);
-  return filtered;
+  getDb().prepare("DELETE FROM entries WHERE id = ?").run(id);
+  return getEntries();
 }

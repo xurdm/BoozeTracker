@@ -10,7 +10,7 @@ nightly logging, live BAC estimation, and historical reporting.
 - **History page.** BAC over time, drinks per night, peak BAC per night, total
   alcohol per night (with a 7-night rolling average), and average drinks by day
   of week — each with Day / Week / Month / All range controls.
-- **Single profile**, auto-loaded and auto-saved, stored as JSON. No database.
+- **Single profile**, auto-loaded and auto-saved, stored in SQLite.
 
 > ⚠️ **Disclaimer:** BAC values are approximations from the Widmark formula using
 > population averages. Individual results vary widely. **Never use this app to
@@ -23,7 +23,7 @@ nightly logging, live BAC estimation, and historical reporting.
 - **Chart.js** is vendored as a UMD file and loaded via `<script>`.
 - **Tailwind CSS** is generated via its CLI.
 - BAC math lives in `src/shared/bac.ts` and runs in the browser; the server is
-  a dumb JSON store. Data is written atomically (temp file + rename).
+  a dumb data store backed by SQLite (`node:sqlite`, no native dependency).
 
 ## Setup
 
@@ -63,10 +63,18 @@ Unit tests (Vitest) cover the BAC math and nightly-grouping logic in
 
 ## Data
 
-Two files are created on first run under `data/` (gitignored):
+Data is stored in a SQLite database via Node's built-in `node:sqlite` module
+(no native dependency, so it works identically under plain Node, PM2, and
+Electron). Two tables: `entries` (one row per drink) and `profile` (a single
+row).
 
-- `profile.json` — weight, sex, units, and BAC model parameters.
-- `entries.json` — a flat array of logged drinks.
+- **Plain Node / PM2:** the database lives at `data/boozetracker.db` (gitignored).
+- **Packaged Electron app:** it lives in the OS `userData` dir
+  (`%APPDATA%/BoozeTracker/data/` on Windows), set via `BOOZETRACKER_DATA_DIR`.
+
+On first open, if legacy `entries.json` / `profile.json` files exist alongside
+the database, their contents are imported once (existing JSON data is
+preserved). Those files are then no longer read.
 
 ## BAC model
 
