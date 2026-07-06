@@ -313,61 +313,82 @@ function renderGramsByTypePerNight(range: RangeKey): void {
   }
 }
 
-// --- full entry history --------------------------------------------------
+// --- full entry history (one night per page) -----------------------------
+
+// Page index into the nights array, newest night = page 0.
+let entryPage = 0;
 
 function renderEntriesList(): void {
   const list = $("entries-list");
   const count = $("entries-count");
+  const pager = $("entries-pager");
   list.innerHTML = "";
 
   if (entries.length === 0) {
     list.innerHTML = `<li class="text-slate-500 text-sm">No entries yet.</li>`;
     count.textContent = "";
+    pager.classList.add("hidden");
     return;
   }
-  count.textContent = `${entries.length} total`;
 
-  // Newest night first; entries within a night newest first.
-  const groups = groupByNight(entries, profile.dayStartHour).reverse();
-  for (const g of groups) {
-    const header = document.createElement("li");
-    header.className = "mt-4 mb-1 text-xs uppercase tracking-wide text-slate-500";
-    const nightDate = new Date(`${g.key}T12:00:00`).toLocaleDateString([], {
-      weekday: "short",
-      month: "short",
-      day: "numeric"
+  // Newest night first.
+  const nights = groupByNight(entries, profile.dayStartHour).reverse();
+
+  // Clamp the page in case entries changed (e.g. a night was emptied by delete).
+  entryPage = Math.min(Math.max(0, entryPage), nights.length - 1);
+  const night = nights[entryPage];
+
+  count.textContent = `${entries.length} total · ${nights.length} night${nights.length === 1 ? "" : "s"}`;
+
+  const nightDate = new Date(`${night.key}T12:00:00`).toLocaleDateString([], {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    year: "numeric"
+  });
+  const header = document.createElement("li");
+  header.className = "mb-1 text-xs uppercase tracking-wide text-slate-500";
+  header.textContent = `${nightDate} · ${night.entries.length} drink${night.entries.length === 1 ? "" : "s"}`;
+  list.appendChild(header);
+
+  const sorted = [...night.entries].sort((a, b) => (a.timestamp < b.timestamp ? 1 : -1));
+  for (const e of sorted) {
+    const li = document.createElement("li");
+    li.className = "flex items-center gap-3 py-2 border-b border-slate-800";
+    const time = new Date(e.timestamp).toLocaleTimeString([], {
+      hour: "2-digit",
+      minute: "2-digit"
     });
-    header.textContent = `${nightDate} · ${g.entries.length} drink${g.entries.length === 1 ? "" : "s"}`;
-    list.appendChild(header);
+    const name = e.label ?? `${Math.round(e.volumeMl)} mL @ ${e.abv}%`;
 
-    const sorted = [...g.entries].sort((a, b) => (a.timestamp < b.timestamp ? 1 : -1));
-    for (const e of sorted) {
-      const li = document.createElement("li");
-      li.className = "flex items-center gap-3 py-2 border-b border-slate-800";
-      const time = new Date(e.timestamp).toLocaleTimeString([], {
-        hour: "2-digit",
-        minute: "2-digit"
-      });
-      const name = e.label ?? `${Math.round(e.volumeMl)} mL @ ${e.abv}%`;
+    const del = document.createElement("button");
+    del.className = "text-slate-500 hover:text-red-400 text-sm shrink-0";
+    del.title = "Delete this entry";
+    del.textContent = "🗑";
+    del.addEventListener("click", () => removeHistoryEntry(e.id));
 
-      const del = document.createElement("button");
-      del.className = "text-slate-500 hover:text-red-400 text-sm shrink-0";
-      del.title = "Delete this entry";
-      del.textContent = "🗑";
-      del.addEventListener("click", () => removeHistoryEntry(e.id));
+    const label = document.createElement("span");
+    label.className = "text-sm text-slate-200 flex-1";
+    label.textContent = name;
 
-      const label = document.createElement("span");
-      label.className = "text-sm text-slate-200 flex-1";
-      label.textContent = name;
+    const meta = document.createElement("span");
+    meta.className = "text-xs text-slate-500 shrink-0";
+    meta.textContent = `${e.gramsAlcohol.toFixed(1)} g · ${time}`;
 
-      const meta = document.createElement("span");
-      meta.className = "text-xs text-slate-500 shrink-0";
-      meta.textContent = `${e.gramsAlcohol.toFixed(1)} g · ${time}`;
-
-      li.append(del, label, meta);
-      list.appendChild(li);
-    }
+    li.append(del, label, meta);
+    list.appendChild(li);
   }
+
+  // Pager: "Newer" moves toward page 0 (recent), "Older" toward the last page.
+  pager.classList.toggle("hidden", nights.length <= 1);
+  $("entries-page-label").textContent = `Night ${entryPage + 1} of ${nights.length}`;
+  ($("entries-prev") as HTMLButtonElement).disabled = entryPage === 0;
+  ($("entries-next") as HTMLButtonElement).disabled = entryPage >= nights.length - 1;
+}
+
+function changeEntryPage(delta: number): void {
+  entryPage += delta;
+  renderEntriesList();
 }
 
 async function removeHistoryEntry(id: string): Promise<void> {
@@ -425,6 +446,9 @@ async function init(): Promise<void> {
   bind("dow", "dow", renderByDayOfWeek);
   bind("type", "type", renderDrinksByType);
   bind("typenight", "typenight", renderGramsByTypePerNight);
+
+  $("entries-prev").addEventListener("click", () => changeEntryPage(-1));
+  $("entries-next").addEventListener("click", () => changeEntryPage(1));
 
   rerenderAll();
 }

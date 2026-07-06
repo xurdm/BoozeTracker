@@ -2,6 +2,16 @@
 @tailwind components;
 @tailwind utilities;
 
+/*
+ * Fluid base size: Tailwind's spacing, type, widths, and chart heights are all
+ * rem-based, so scaling the root font-size scales the whole UI with the window.
+ * The clamp() blends viewport width and height (so it responds to both window
+ * dimensions) and is bounded so it never gets unreadably small or huge.
+ */
+html {
+  font-size: clamp(12px, calc(0.45vw + 0.55vh + 6px), 24px);
+}
+
 /* Dark-themed scrollbars to match bg-slate-900. */
 :root {
   color-scheme: dark; /* native dark scrollbars/inputs in browsers that honour it */
