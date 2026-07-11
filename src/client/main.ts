@@ -206,6 +206,7 @@ function renderComboChips(): void {
     chip.className = chipClass(selectedVolume === v.ml);
     chip.addEventListener("click", () => {
       selectedVolume = v.ml;
+      $<HTMLInputElement>("volume-custom").value = ""; // chip and custom box are exclusive
       renderComboChips();
     });
     volRow.appendChild(chip);
@@ -217,11 +218,13 @@ function renderComboChips(): void {
     chip.className = chipClass(selectedAbv === a.abv);
     chip.addEventListener("click", () => {
       selectedAbv = a.abv;
+      $<HTMLInputElement>("abv-custom").value = "";
       renderComboChips();
     });
     abvRow.appendChild(chip);
   }
 
+  $("volume-custom-unit").textContent = profile.units === "metric" ? "mL" : "oz";
   updateAddState();
 }
 
@@ -485,6 +488,30 @@ async function init(): Promise<void> {
       logDrink(selectedVolume, selectedAbv, label);
     }
   });
+
+  // Custom-value textboxes feed the same selectedVolume/selectedAbv used by the
+  // chips (typing overrides any chip selection; clearing resets to none).
+  $("volume-custom").addEventListener("input", () => {
+    const raw = $<HTMLInputElement>("volume-custom").value.trim();
+    const val = Number(raw);
+    if (raw !== "" && Number.isFinite(val) && val > 0) {
+      selectedVolume = profile.units === "metric" ? val : val * ML_PER_OZ;
+    } else {
+      selectedVolume = null;
+    }
+    renderComboChips();
+  });
+  $("abv-custom").addEventListener("input", () => {
+    const raw = $<HTMLInputElement>("abv-custom").value.trim();
+    const val = Number(raw);
+    if (raw !== "" && Number.isFinite(val) && val >= 0) {
+      selectedAbv = val;
+    } else {
+      selectedAbv = null;
+    }
+    renderComboChips();
+  });
+
   $("undo-btn").addEventListener("click", undoLast);
 
   // Settings panel toggle + auto-save on change.

@@ -50,9 +50,21 @@
       <section class="bg-slate-800/50 rounded-2xl p-5 mb-6">
         <h3 class="text-sm font-semibold text-slate-300 mb-3">Custom combo</h3>
         <div class="mb-2 text-xs text-slate-400">Volume</div>
-        <div id="volume-chips" class="flex flex-wrap gap-2 mb-4"></div>
+        <div class="flex flex-wrap items-center gap-2 mb-4">
+          <div id="volume-chips" class="flex flex-wrap gap-2"></div>
+          <div class="flex items-center gap-1">
+            <input id="volume-custom" type="number" min="0" step="any" placeholder="Custom" class="w-24 bg-slate-900 border border-slate-700 rounded-lg px-2 py-2 text-sm" />
+            <span id="volume-custom-unit" class="text-xs text-slate-400">oz</span>
+          </div>
+        </div>
         <div class="mb-2 text-xs text-slate-400">ABV</div>
-        <div id="abv-chips" class="flex flex-wrap gap-2 mb-4"></div>
+        <div class="flex flex-wrap items-center gap-2 mb-4">
+          <div id="abv-chips" class="flex flex-wrap gap-2"></div>
+          <div class="flex items-center gap-1">
+            <input id="abv-custom" type="number" min="0" max="100" step="any" placeholder="Custom" class="w-24 bg-slate-900 border border-slate-700 rounded-lg px-2 py-2 text-sm" />
+            <span class="text-xs text-slate-400">%</span>
+          </div>
+        </div>
         <button id="combo-add" disabled class="px-4 py-2 rounded-lg bg-slate-700 text-slate-500 cursor-not-allowed text-sm font-medium">Add drink</button>
       </section>
 
