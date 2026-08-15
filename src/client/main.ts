@@ -26,7 +26,7 @@ function currentNightEntries(nowMs: number): Entry[] {
   });
 }
 import { ABV_PRESETS, DRINK_PRESETS, ML_PER_OZ, VOLUME_PRESETS } from "../shared/presets.js";
-import { DEFAULT_PROFILE, type Entry, type Profile } from "../shared/types.js";
+import { DEFAULT_PROFILE, LIQUOR_ABV_THRESHOLD, type Entry, type Profile } from "../shared/types.js";
 
 let profile: Profile = { ...DEFAULT_PROFILE };
 let entries: Entry[] = [];
@@ -99,7 +99,15 @@ const TIME_PRESETS: Array<{ label: string; minutes: number }> = [
 ];
 
 async function logDrink(volumeMl: number, abv: number, label: string): Promise<void> {
-  const offset = selectedOffsetMinutes;
+  // A manual "When" chip takes precedence; otherwise apply the non-liquor
+  // auto-backdate for drinks below the liquor threshold.
+  const isLiquor = abv >= LIQUOR_ABV_THRESHOLD;
+  const offset =
+    selectedOffsetMinutes > 0
+      ? selectedOffsetMinutes
+      : isLiquor
+        ? 0
+        : profile.nonLiquorOffsetMinutes;
   const timestamp =
     offset > 0 ? new Date(Date.now() - offset * 60_000).toISOString() : undefined;
   try {
@@ -399,6 +407,7 @@ function populateSettings(): void {
   $<HTMLInputElement>("beta-input").value = String(profile.betaRate);
   $<HTMLInputElement>("absorption-input").value = String(profile.absorptionMinutes);
   $<HTMLInputElement>("daystart-input").value = String(profile.dayStartHour);
+  $<HTMLInputElement>("nonliquor-offset-input").value = String(profile.nonLiquorOffsetMinutes);
   $<HTMLInputElement>("roverride-input").value =
     profile.rOverride !== undefined ? String(profile.rOverride) : "";
 }
@@ -416,6 +425,7 @@ async function saveSettings(): Promise<void> {
     betaRate: Number($<HTMLInputElement>("beta-input").value) || profile.betaRate,
     absorptionMinutes: Number($<HTMLInputElement>("absorption-input").value),
     dayStartHour: Number($<HTMLInputElement>("daystart-input").value),
+    nonLiquorOffsetMinutes: Math.max(0, Number($<HTMLInputElement>("nonliquor-offset-input").value) || 0),
     ...(rRaw !== "" && Number(rRaw) > 0 ? { rOverride: Number(rRaw) } : {})
   };
 
@@ -454,21 +464,21 @@ function renderRecent(): void {
     const ago = formatRelative(e.timestamp, Date.now());
     const name = e.label ?? `${formatVolume(e.volumeMl)} @ ${e.abv}%`;
 
-    const del = document.createElement("button");
-    del.className = "text-slate-500 hover:text-red-400 text-sm shrink-0";
-    del.title = "Delete this entry";
-    del.textContent = "🗑";
-    del.addEventListener("click", () => removeEntry(e.id, name));
+    const when = document.createElement("span");
+    when.className = "text-xs text-slate-500 shrink-0";
+    when.textContent = `${ago} · ${time}`;
 
     const label = document.createElement("span");
     label.className = "text-sm text-slate-200 flex-1";
     label.textContent = name;
 
-    const when = document.createElement("span");
-    when.className = "text-xs text-slate-500 shrink-0";
-    when.textContent = `${ago} · ${time}`;
+    const del = document.createElement("button");
+    del.className = "text-red-500 hover:text-red-400 text-sm shrink-0";
+    del.title = "Delete this entry";
+    del.textContent = "🗑";
+    del.addEventListener("click", () => removeEntry(e.id, name));
 
-    li.append(del, label, when);
+    li.append(when, label, del);
     list.appendChild(li);
   }
 }
@@ -518,7 +528,7 @@ async function init(): Promise<void> {
   $("settings-toggle").addEventListener("click", () => {
     $("settings-body").classList.toggle("hidden");
   });
-  ["weight-input", "sex-input", "units-input", "beta-input", "absorption-input", "daystart-input", "roverride-input"].forEach(
+  ["weight-input", "sex-input", "units-input", "beta-input", "absorption-input", "daystart-input", "nonliquor-offset-input", "roverride-input"].forEach(
     (id) => $(id).addEventListener("change", saveSettings)
   );
 

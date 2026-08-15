@@ -45,7 +45,8 @@ app.put("/api/profile", async (req, res) => {
     units,
     betaRate: Math.max(0.001, num(body.betaRate, current.betaRate)),
     absorptionMinutes: Math.max(0, num(body.absorptionMinutes, current.absorptionMinutes)),
-    dayStartHour: Math.min(23, Math.max(0, Math.round(num(body.dayStartHour, current.dayStartHour))))
+    dayStartHour: Math.min(23, Math.max(0, Math.round(num(body.dayStartHour, current.dayStartHour)))),
+    nonLiquorOffsetMinutes: Math.max(0, num(body.nonLiquorOffsetMinutes, current.nonLiquorOffsetMinutes))
   };
 
   if (typeof body.rOverride === "number" && Number.isFinite(body.rOverride) && body.rOverride > 0) {

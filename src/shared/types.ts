@@ -18,6 +18,12 @@ export interface Profile {
   absorptionMinutes: number;
   /** Hour (local, 0-23) at which a new "night" begins. */
   dayStartHour: number;
+  /**
+   * Minutes to automatically backdate a non-liquor drink (ABV below the liquor
+   * threshold), approximating how long it takes to actually drink it. Applied
+   * only when logging "now"; 0 disables it.
+   */
+  nonLiquorOffsetMinutes: number;
 }
 
 export interface Entry {
@@ -40,5 +46,9 @@ export const DEFAULT_PROFILE: Profile = {
   units: "imperial",
   betaRate: 0.015,
   absorptionMinutes: 30,
-  dayStartHour: 20
+  dayStartHour: 20,
+  nonLiquorOffsetMinutes: 0
 };
+
+/** ABV at or above which a drink is treated as liquor (no auto-backdate). */
+export const LIQUOR_ABV_THRESHOLD = 35;

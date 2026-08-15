@@ -11,9 +11,11 @@ import {
   type RangeKey
 } from "./charts.js";
 import {
+  estimateTimeAtBac,
   groupByNight,
   peakBacForEntries,
-  sampleBacCurve
+  sampleBacCurve,
+  totalBacAt
 } from "../shared/bac.js";
 import { categorizeDrink, DRINK_TYPES, type DrinkType } from "../shared/presets.js";
 import { DEFAULT_PROFILE, type Entry, type Profile } from "../shared/types.js";
@@ -48,6 +50,205 @@ function nightLabels(keys: string[]): string[] {
     const d = new Date(`${k}T12:00:00`);
     return d.toLocaleDateString([], { month: "short", day: "numeric" });
   });
+}
+
+// --- night detail: a single night's BAC curve (like the Tonight tab) -----
+
+let nightChart: ChartInstance | null = null;
+const nightSpanRef = { value: 12 * 3_600_000 };
+let selectedNightKey: string | null = null;
+
+interface DrinkMarker {
+  x: number;
+  y: number;
+  drinks: string[];
+}
+
+/** Per-minute drink markers for a night, positioned on its BAC curve. */
+function buildNightMarkers(nightEntries: Entry[]): DrinkMarker[] {
+  const buckets = new Map<number, Map<string, number>>();
+  for (const e of nightEntries) {
+    const t = new Date(e.timestamp).getTime();
+    const bucket = Math.round(t / 60_000) * 60_000;
+    const labels = buckets.get(bucket) ?? new Map<string, number>();
+    const name = e.label ?? `${Math.round(e.volumeMl)} mL @ ${e.abv}%`;
+    labels.set(name, (labels.get(name) ?? 0) + 1);
+    buckets.set(bucket, labels);
+  }
+  return [...buckets.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([bucket, labels]) => ({
+      x: bucket,
+      y: totalBacAt(nightEntries, profile, bucket),
+      drinks: [...labels.entries()].map(([name, n]) => (n > 1 ? `🍹 ${name} ×${n}` : `🍹 ${name}`))
+    }));
+}
+
+function selectNight(key: string): void {
+  selectedNightKey = key;
+  renderNightDetail();
+  $("night-detail").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function renderNightDetail(): void {
+  const nights = groupByNight(entries, profile.dayStartHour); // oldest → newest
+  const summary = $("night-summary");
+  const label = $("night-label");
+
+  if (nights.length === 0) {
+    label.textContent = "—";
+    summary.textContent = "No entries yet.";
+    (($("night-prev") as HTMLButtonElement).disabled = true),
+      (($("night-next") as HTMLButtonElement).disabled = true);
+    if (nightChart) {
+      nightChart.data.datasets = [];
+      nightChart.update();
+    }
+    return;
+  }
+
+  // Default to the most recent night; clamp if the selection vanished.
+  let idx = nights.findIndex((n) => n.key === selectedNightKey);
+  if (idx === -1) {
+    idx = nights.length - 1;
+    selectedNightKey = nights[idx].key;
+  }
+  const night = nights[idx];
+  const nightEntries = night.entries;
+
+  const times = nightEntries.map((e) => new Date(e.timestamp).getTime());
+  const firstDrink = Math.min(...times);
+  const lastDrink = Math.max(...times);
+  const soberAt = estimateTimeAtBac(nightEntries, profile, lastDrink, 0.0001) ?? lastDrink;
+  const start = firstDrink - 30 * 60_000;
+  const end = soberAt + 15 * 60_000;
+  nightSpanRef.value = end - start;
+
+  const step = Math.max(60_000, Math.round((end - start) / 300));
+  const curve = sampleBacCurve(nightEntries, profile, start, end, step).map((p) => ({
+    x: p.t,
+    y: p.bac
+  }));
+
+  // Peak + its time, and the 0.08% descending crossing (if reached).
+  let peak = 0;
+  let peakTime = firstDrink;
+  for (const pt of curve) {
+    if (pt.y > peak) {
+      peak = pt.y;
+      peakTime = pt.x;
+    }
+  }
+  const datasets: unknown[] = [
+    {
+      label: "BAC %",
+      data: curve,
+      borderColor: "#7c4dff",
+      backgroundColor: "rgba(124, 77, 255, 0.15)",
+      borderWidth: 2,
+      fill: true,
+      tension: 0.25,
+      pointRadius: 0
+    },
+    {
+      label: "Drinks",
+      type: "scatter",
+      data: buildNightMarkers(nightEntries),
+      backgroundColor: "#f59e0b",
+      borderColor: "#1e293b",
+      borderWidth: 2,
+      pointRadius: 6,
+      pointHoverRadius: 8,
+      pointHitRadius: 12,
+      showLine: false
+    }
+  ];
+
+  const limitCross = peak > 0.08 ? estimateTimeAtBac(nightEntries, profile, peakTime, 0.08) : null;
+  if (limitCross !== null && limitCross <= end) {
+    const clock = new Date(limitCross).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    datasets.push({
+      label: "0.08% limit",
+      type: "scatter",
+      data: [{ x: limitCross, y: 0.08, note: `Below 0.08% at ~${clock}` }],
+      backgroundColor: "#ef4444",
+      borderColor: "#fee2e2",
+      borderWidth: 2,
+      pointRadius: 7,
+      pointHoverRadius: 9,
+      pointHitRadius: 12,
+      pointStyle: "rectRot",
+      showLine: false
+    });
+  }
+
+  if (nightChart) {
+    nightChart.data.datasets = datasets;
+    nightChart.options.scales.x.min = start;
+    nightChart.options.scales.x.max = end;
+    nightChart.update();
+  } else {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const options: any = lineChartOptions(nightSpanRef, "BAC %");
+    options.elements = { point: { radius: 0 } };
+    options.interaction = { mode: "nearest", intersect: true };
+    options.plugins.tooltip.mode = "nearest";
+    options.plugins.tooltip.intersect = true;
+    options.plugins.tooltip.callbacks.label = (ctx: {
+      raw?: { drinks?: string[]; note?: string };
+      parsed: { y: number };
+    }) => {
+      if (ctx.raw && ctx.raw.note) return ctx.raw.note;
+      const bac = `BAC: ${Number(ctx.parsed.y).toFixed(3)}%`;
+      if (ctx.raw && ctx.raw.drinks) return [bac, ...ctx.raw.drinks];
+      return bac;
+    };
+    options.scales.x.min = start;
+    options.scales.x.max = end;
+    nightChart = new Chart($<HTMLCanvasElement>("night-chart").getContext("2d"), {
+      type: "line",
+      data: { datasets },
+      options
+    });
+  }
+
+  // Label + summary.
+  const dateStr = new Date(`${night.key}T12:00:00`).toLocaleDateString([], {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    year: "numeric"
+  });
+  label.textContent = dateStr;
+  const totalG = nightEntries.reduce((s, e) => s + e.gramsAlcohol, 0);
+  const soberClock = new Date(soberAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  summary.textContent = `${nightEntries.length} drink${nightEntries.length === 1 ? "" : "s"} · ${(totalG / 14).toFixed(1)} std · peak ${peak.toFixed(3)}% · sober ~${soberClock}`;
+
+  ($("night-prev") as HTMLButtonElement).disabled = idx === 0;
+  ($("night-next") as HTMLButtonElement).disabled = idx >= nights.length - 1;
+}
+
+function changeNight(delta: number): void {
+  const nights = groupByNight(entries, profile.dayStartHour);
+  let idx = nights.findIndex((n) => n.key === selectedNightKey);
+  if (idx === -1) idx = nights.length - 1;
+  idx = Math.min(Math.max(0, idx + delta), nights.length - 1);
+  if (nights[idx]) selectNight(nights[idx].key);
+}
+
+/**
+ * Make a per-night bar chart clickable: clicking a bar jumps the Night detail
+ * view to that night. Maps the clicked bar's index to the night key using the
+ * chart's current range (so it stays correct after range changes).
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function attachNightClick(opts: any, key: keyof typeof current): void {
+  opts.onClick = (_e: unknown, els: Array<{ index: number }>): void => {
+    if (!els || els.length === 0) return;
+    const groups = groupByNight(filterByRange(current[key]), profile.dayStartHour);
+    const g = groups[els[0].index];
+    if (g) selectNight(g.key);
+  };
 }
 
 // --- chart 1: BAC over time ---------------------------------------------
@@ -126,10 +327,12 @@ function renderDrinksPerNight(range: RangeKey): void {
     drinksChart.data.datasets = [dataset];
     drinksChart.update();
   } else {
+    const opts = barChartOptions("Drinks");
+    attachNightClick(opts, "drinks");
     drinksChart = new Chart($<HTMLCanvasElement>("drinks-chart").getContext("2d"), {
       type: "bar",
       data: { labels, datasets: [dataset] },
-      options: barChartOptions("Drinks")
+      options: opts
     });
   }
 }
@@ -154,10 +357,12 @@ function renderPeakBac(range: RangeKey): void {
     peakChart.data.datasets = [dataset];
     peakChart.update();
   } else {
+    const opts = barChartOptions("Peak BAC %");
+    attachNightClick(opts, "peak");
     peakChart = new Chart($<HTMLCanvasElement>("peak-chart").getContext("2d"), {
       type: "bar",
       data: { labels, datasets: [dataset] },
-      options: barChartOptions("Peak BAC %")
+      options: opts
     });
   }
 }
@@ -203,10 +408,12 @@ function renderGramsPerNight(range: RangeKey): void {
     gramsChart.data.datasets = datasets;
     gramsChart.update();
   } else {
+    const opts = barChartOptions("Alcohol (g)");
+    attachNightClick(opts, "grams");
     gramsChart = new Chart($<HTMLCanvasElement>("grams-chart").getContext("2d"), {
       type: "bar",
       data: { labels, datasets },
-      options: barChartOptions("Alcohol (g)")
+      options: opts
     });
   }
 }
@@ -305,10 +512,207 @@ function renderGramsByTypePerNight(range: RangeKey): void {
     const opts = barChartOptions("Alcohol (g)");
     opts.scales.x = { ...opts.scales.x, stacked: true } as typeof opts.scales.x;
     opts.scales.y = { ...opts.scales.y, stacked: true } as typeof opts.scales.y;
+    attachNightClick(opts, "typenight");
     typeNightChart = new Chart($<HTMLCanvasElement>("typenight-chart").getContext("2d"), {
       type: "bar",
       data: { labels, datasets },
       options: opts
+    });
+  }
+}
+
+// --- chart 8: drinking clock (drinks by hour of day, polar area) ---------
+
+let hourChart: ChartInstance | null = null;
+
+function renderDrinkingClock(range: RangeKey): void {
+  const counts = new Array(24).fill(0);
+  for (const e of filterByRange(range)) counts[new Date(e.timestamp).getHours()]++;
+  const labels = counts.map((_, h) => `${String(h).padStart(2, "0")}:00`);
+
+  // Colour each hour sector by time-of-day: cool blues overnight, warm ambers
+  // in the evening — purely aesthetic.
+  const colors = counts.map((_, h) => {
+    const hue = (210 + (h / 24) * 180) % 360; // sweep blue → magenta → amber
+    return `hsla(${hue}, 70%, 60%, 0.55)`;
+  });
+
+  const dataset = { data: counts, backgroundColor: colors, borderWidth: 1, borderColor: "#0f172a" };
+
+  if (hourChart) {
+    hourChart.data.labels = labels;
+    hourChart.data.datasets = [dataset];
+    hourChart.update();
+  } else {
+    hourChart = new Chart($<HTMLCanvasElement>("hour-chart").getContext("2d"), {
+      type: "polarArea",
+      data: { labels, datasets: [dataset] },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        scales: {
+          r: {
+            grid: { color: "rgba(148,163,184,0.15)" },
+            angleLines: { color: "rgba(148,163,184,0.15)" },
+            ticks: { color: "rgba(148,163,184,0.7)", backdropColor: "transparent" },
+            pointLabels: { display: false }
+          }
+        },
+        plugins: { legend: { display: false } }
+      }
+    });
+  }
+}
+
+// --- chart 9: palate radar (total alcohol grams by type) -----------------
+
+let palateChart: ChartInstance | null = null;
+
+function renderPalateRadar(range: RangeKey): void {
+  const grams = new Map<DrinkType, number>();
+  for (const e of filterByRange(range)) {
+    const t = categorizeDrink(e.label, e.abv);
+    grams.set(t, (grams.get(t) ?? 0) + e.gramsAlcohol);
+  }
+  const labels = DRINK_TYPES;
+  const data = labels.map((t) => Number((grams.get(t) ?? 0).toFixed(1)));
+
+  const dataset = {
+    label: "Alcohol (g)",
+    data,
+    backgroundColor: "rgba(124, 77, 255, 0.25)",
+    borderColor: "#7c4dff",
+    borderWidth: 2,
+    pointBackgroundColor: labels.map((t) => TYPE_COLORS[t]),
+    pointRadius: 4
+  };
+
+  if (palateChart) {
+    palateChart.data.datasets = [dataset];
+    palateChart.update();
+  } else {
+    palateChart = new Chart($<HTMLCanvasElement>("palate-chart").getContext("2d"), {
+      type: "radar",
+      data: { labels, datasets: [dataset] },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        scales: {
+          r: {
+            grid: { color: "rgba(148,163,184,0.15)" },
+            angleLines: { color: "rgba(148,163,184,0.15)" },
+            ticks: { color: "rgba(148,163,184,0.7)", backdropColor: "transparent" },
+            pointLabels: { color: "rgba(148,163,184,0.9)", font: { size: 12 } }
+          }
+        },
+        plugins: { legend: { display: false } }
+      }
+    });
+  }
+}
+
+// --- chart 10: cumulative alcohol over time (running total) --------------
+
+let cumulativeChart: ChartInstance | null = null;
+const cumulativeSpanRef = { value: 7 * 24 * 3_600_000 };
+
+function renderCumulative(range: RangeKey): void {
+  const data = filterByRange(range).sort(
+    (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+  );
+  let running = 0;
+  const points = data.map((e) => {
+    running += e.gramsAlcohol;
+    return { x: new Date(e.timestamp).getTime(), y: Number(running.toFixed(1)) };
+  });
+  if (points.length > 0) {
+    cumulativeSpanRef.value = points[points.length - 1].x - points[0].x || 24 * 3_600_000;
+  }
+
+  const dataset = {
+    label: "Cumulative alcohol (g)",
+    data: points,
+    borderColor: "#10b981",
+    backgroundColor: "rgba(16, 185, 129, 0.15)",
+    borderWidth: 2,
+    fill: true,
+    stepped: false,
+    tension: 0,
+    pointRadius: 0
+  };
+
+  if (cumulativeChart) {
+    cumulativeChart.data.datasets = [dataset];
+    cumulativeChart.update();
+  } else {
+    cumulativeChart = new Chart($<HTMLCanvasElement>("cumulative-chart").getContext("2d"), {
+      type: "line",
+      data: { datasets: [dataset] },
+      options: lineChartOptions(cumulativeSpanRef, "Alcohol (g)")
+    });
+  }
+}
+
+// --- chart 11: peak BAC vs drinks per night (bubble) ---------------------
+
+let bubbleChart: ChartInstance | null = null;
+
+function renderPeakVsDrinks(range: RangeKey): void {
+  const groups = groupByNight(filterByRange(range), profile.dayStartHour);
+  const points = groups.map((g) => {
+    const totalG = g.entries.reduce((s, e) => s + e.gramsAlcohol, 0);
+    return {
+      x: g.entries.length,
+      y: Number(peakBacForEntries(g.entries, profile).toFixed(4)),
+      r: Math.max(4, Math.sqrt(totalG) * 1.6), // bubble area ∝ total alcohol
+      night: new Date(`${g.key}T12:00:00`).toLocaleDateString([], { month: "short", day: "numeric" })
+    };
+  });
+
+  const dataset = {
+    label: "Night",
+    data: points,
+    backgroundColor: "rgba(245, 158, 11, 0.5)",
+    borderColor: "#f59e0b",
+    borderWidth: 1
+  };
+
+  const options = {
+    responsive: true,
+    maintainAspectRatio: false,
+    scales: {
+      x: {
+        beginAtZero: true,
+        title: { display: true, text: "Drinks that night", color: "rgba(148,163,184,0.9)" },
+        grid: { color: "rgba(148,163,184,0.15)" },
+        ticks: { color: "rgba(148,163,184,0.9)", precision: 0 }
+      },
+      y: {
+        beginAtZero: true,
+        title: { display: true, text: "Peak BAC %", color: "rgba(148,163,184,0.9)" },
+        grid: { color: "rgba(148,163,184,0.15)" },
+        ticks: { color: "rgba(148,163,184,0.9)" }
+      }
+    },
+    plugins: {
+      legend: { display: false },
+      tooltip: {
+        callbacks: {
+          label: (ctx: { raw: { x: number; y: number; night: string } }) =>
+            `${ctx.raw.night}: ${ctx.raw.x} drinks, peak ${ctx.raw.y.toFixed(3)}%`
+        }
+      }
+    }
+  };
+
+  if (bubbleChart) {
+    bubbleChart.data.datasets = [dataset];
+    bubbleChart.update();
+  } else {
+    bubbleChart = new Chart($<HTMLCanvasElement>("bubble-chart").getContext("2d"), {
+      type: "bubble",
+      data: { datasets: [dataset] },
+      options
     });
   }
 }
@@ -411,7 +815,11 @@ const current = {
   grams: "week" as RangeKey,
   dow: "all" as RangeKey,
   type: "week" as RangeKey,
-  typenight: "week" as RangeKey
+  typenight: "week" as RangeKey,
+  hour: "all" as RangeKey,
+  palate: "all" as RangeKey,
+  cumulative: "all" as RangeKey,
+  bubble: "all" as RangeKey
 };
 
 function rerenderAll(): void {
@@ -422,6 +830,11 @@ function rerenderAll(): void {
   renderByDayOfWeek(current.dow);
   renderDrinksByType(current.type);
   renderGramsByTypePerNight(current.typenight);
+  renderDrinkingClock(current.hour);
+  renderPalateRadar(current.palate);
+  renderCumulative(current.cumulative);
+  renderPeakVsDrinks(current.bubble);
+  renderNightDetail();
   renderEntriesList();
 }
 
@@ -446,11 +859,117 @@ async function init(): Promise<void> {
   bind("dow", "dow", renderByDayOfWeek);
   bind("type", "type", renderDrinksByType);
   bind("typenight", "typenight", renderGramsByTypePerNight);
+  bind("hour", "hour", renderDrinkingClock);
+  bind("palate", "palate", renderPalateRadar);
+  bind("cumulative", "cumulative", renderCumulative);
+  bind("bubble", "bubble", renderPeakVsDrinks);
 
   $("entries-prev").addEventListener("click", () => changeEntryPage(-1));
   $("entries-next").addEventListener("click", () => changeEntryPage(1));
 
+  $("night-prev").addEventListener("click", () => changeNight(-1));
+  $("night-next").addEventListener("click", () => changeNight(1));
+
+  setupChartExpand();
   rerenderAll();
+}
+
+// --- enlarge charts ------------------------------------------------------
+
+// Every chart's canvas id; the wrapper div is its parent, the range control is
+// "range-<name>" (name = id without the "-chart" suffix).
+const CHART_CANVAS_IDS = [
+  "bac-chart",
+  "drinks-chart",
+  "peak-chart",
+  "grams-chart",
+  "dow-chart",
+  "type-chart",
+  "typenight-chart",
+  "hour-chart",
+  "palate-chart",
+  "cumulative-chart",
+  "bubble-chart"
+];
+
+/**
+ * Adds an "enlarge" button to each chart. Clicking it moves the chart's canvas
+ * wrapper into a modal (so Chart.js resizes it up, keeping all interactivity);
+ * closing moves it back to its original spot.
+ */
+function setupChartExpand(): void {
+  const modal = $("chart-modal");
+  const body = $("chart-modal-body");
+  const titleEl = $("chart-modal-title");
+
+  // Where the currently-enlarged chart came from, so we can restore it exactly.
+  let active: {
+    wrapper: HTMLElement;
+    parent: HTMLElement;
+    next: Node | null;
+    cls: string;
+  } | null = null;
+
+  const forceResize = () => window.dispatchEvent(new Event("resize"));
+
+  const close = (): void => {
+    if (!active) return;
+    active.wrapper.className = active.cls;
+    active.parent.insertBefore(active.wrapper, active.next);
+    modal.classList.add("hidden");
+    active = null;
+    requestAnimationFrame(forceResize);
+  };
+
+  const open = (wrapper: HTMLElement, title: string): void => {
+    if (active) close();
+    active = {
+      wrapper,
+      parent: wrapper.parentElement as HTMLElement,
+      next: wrapper.nextSibling,
+      cls: wrapper.className
+    };
+    wrapper.className = "w-full h-full";
+    titleEl.textContent = title;
+    body.appendChild(wrapper);
+    modal.classList.remove("hidden");
+    requestAnimationFrame(forceResize);
+  };
+
+  for (const canvasId of CHART_CANVAS_IDS) {
+    const canvas = document.getElementById(canvasId);
+    if (!canvas || !canvas.parentElement) continue;
+    const wrapper = canvas.parentElement;
+
+    const name = canvasId.replace("-chart", "");
+    const rangeDiv = document.getElementById(`range-${name}`);
+    if (!rangeDiv || !rangeDiv.parentElement) continue;
+    const header = rangeDiv.parentElement; // the flex justify-between header row
+    const chartTitle = header.querySelector("h2")?.textContent ?? "Chart";
+
+    // Group the range control and a new expand button together on the right.
+    const group = document.createElement("div");
+    group.className = "flex items-center gap-2";
+    header.insertBefore(group, rangeDiv);
+    group.appendChild(rangeDiv);
+
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.title = "Enlarge";
+    btn.textContent = "⤢";
+    btn.className = "px-2 py-1 text-sm rounded-md bg-slate-700 text-slate-300 hover:bg-slate-600";
+    btn.addEventListener("click", () => open(wrapper, chartTitle));
+    group.appendChild(btn);
+  }
+
+  $("chart-modal-close").addEventListener("click", close);
+  // Click on the backdrop (outside the panel) closes.
+  modal.addEventListener("click", (e) => {
+    if (e.target === modal) close();
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") close();
+  });
 }
 
 init();

@@ -26,6 +26,21 @@
         <div class="h-72"><canvas id="bac-chart"></canvas></div>
       </section>
 
+      <!-- Night detail: a single night's BAC curve, like the "Tonight" tab -->
+      <section id="night-detail" class="bg-slate-800/50 rounded-2xl p-5 mb-6">
+        <div class="flex items-center justify-between mb-3">
+          <h2 class="text-lg font-semibold">🌙 Night detail</h2>
+          <div class="flex items-center gap-2">
+            <button id="night-prev" class="px-3 py-1 text-sm rounded-md bg-slate-700 text-slate-200 hover:bg-slate-600 disabled:opacity-40 disabled:cursor-not-allowed">← Older</button>
+            <span id="night-label" class="text-xs text-slate-400 min-w-[7rem] text-center"></span>
+            <button id="night-next" class="px-3 py-1 text-sm rounded-md bg-slate-700 text-slate-200 hover:bg-slate-600 disabled:opacity-40 disabled:cursor-not-allowed">Newer →</button>
+          </div>
+        </div>
+        <div class="h-72"><canvas id="night-chart"></canvas></div>
+        <div id="night-summary" class="mt-2 text-sm text-slate-300"></div>
+        <p class="mt-1 text-xs text-slate-500">Tip: click a bar in the per-night charts below to jump to that night.</p>
+      </section>
+
       <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <!-- Drinks per night -->
         <section class="bg-slate-800/50 rounded-2xl p-5">
@@ -80,6 +95,42 @@
           </div>
           <div class="h-64"><canvas id="typenight-chart"></canvas></div>
         </section>
+
+        <!-- Drinking clock: drinks by hour of day -->
+        <section class="bg-slate-800/50 rounded-2xl p-5">
+          <div class="flex items-center justify-between mb-3">
+            <h2 class="text-lg font-semibold">🕐 Drinking clock</h2>
+            <div id="range-hour" class="flex gap-2"></div>
+          </div>
+          <div class="h-64"><canvas id="hour-chart"></canvas></div>
+        </section>
+
+        <!-- Palate radar: total alcohol by type -->
+        <section class="bg-slate-800/50 rounded-2xl p-5">
+          <div class="flex items-center justify-between mb-3">
+            <h2 class="text-lg font-semibold">🎯 Palate radar</h2>
+            <div id="range-palate" class="flex gap-2"></div>
+          </div>
+          <div class="h-64"><canvas id="palate-chart"></canvas></div>
+        </section>
+
+        <!-- Cumulative alcohol over time -->
+        <section class="bg-slate-800/50 rounded-2xl p-5">
+          <div class="flex items-center justify-between mb-3">
+            <h2 class="text-lg font-semibold">📈 Cumulative alcohol</h2>
+            <div id="range-cumulative" class="flex gap-2"></div>
+          </div>
+          <div class="h-64"><canvas id="cumulative-chart"></canvas></div>
+        </section>
+
+        <!-- Peak BAC vs drinks per night (bubble) -->
+        <section class="bg-slate-800/50 rounded-2xl p-5">
+          <div class="flex items-center justify-between mb-3">
+            <h2 class="text-lg font-semibold">🫧 Peak BAC vs drinks</h2>
+            <div id="range-bubble" class="flex gap-2"></div>
+          </div>
+          <div class="h-64"><canvas id="bubble-chart"></canvas></div>
+        </section>
       </div>
 
       <!-- Full entry history (paged one night at a time) -->
@@ -99,6 +150,17 @@
       <p class="mt-6 mb-10 text-xs text-amber-400/90">
         ⚠️ BAC values are Widmark approximations using population averages and should never be used to decide whether it is safe to drive.
       </p>
+    </div>
+
+    <!-- Enlarged-chart modal: a chart's canvas is moved here on expand. -->
+    <div id="chart-modal" class="hidden fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4 sm:p-8">
+      <div id="chart-modal-panel" class="bg-slate-800 rounded-2xl p-4 w-[92vw] max-w-5xl h-[82vh] flex flex-col shadow-2xl">
+        <div class="flex items-center justify-between mb-3">
+          <h3 id="chart-modal-title" class="text-lg font-semibold"></h3>
+          <button id="chart-modal-close" title="Close" class="text-slate-300 hover:text-white text-2xl leading-none px-2">✕</button>
+        </div>
+        <div id="chart-modal-body" class="flex-1 min-h-0"></div>
+      </div>
     </div>
 
     <script src="/vendor/chart.umd.js"></script>

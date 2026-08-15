@@ -82,9 +82,24 @@ function getDb(): DatabaseSync {
     );
   `);
 
+  addColumnIfMissing(db, "profile", "nonLiquorOffsetMinutes", "REAL");
+
   migrateLegacyData(db, dir);
   openedPath = file;
   return db;
+}
+
+/** Add a column to an existing table if it isn't already present (simple migration). */
+function addColumnIfMissing(
+  database: DatabaseSync,
+  table: string,
+  column: string,
+  type: string
+): void {
+  const cols = database.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+  if (!cols.some((c) => c.name === column)) {
+    database.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
+  }
 }
 
 /**
@@ -208,8 +223,8 @@ function readProfileFromJson(file: string): Profile | null {
 function writeProfileRow(database: DatabaseSync, p: Profile): void {
   database
     .prepare(
-      `INSERT INTO profile (id, weightKg, sex, units, rOverride, betaRate, absorptionMinutes, dayStartHour)
-       VALUES (1, ?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO profile (id, weightKg, sex, units, rOverride, betaRate, absorptionMinutes, dayStartHour, nonLiquorOffsetMinutes)
+       VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET
          weightKg = excluded.weightKg,
          sex = excluded.sex,
@@ -217,7 +232,8 @@ function writeProfileRow(database: DatabaseSync, p: Profile): void {
          rOverride = excluded.rOverride,
          betaRate = excluded.betaRate,
          absorptionMinutes = excluded.absorptionMinutes,
-         dayStartHour = excluded.dayStartHour`
+         dayStartHour = excluded.dayStartHour,
+         nonLiquorOffsetMinutes = excluded.nonLiquorOffsetMinutes`
     )
     .run(
       p.weightKg,
@@ -226,7 +242,8 @@ function writeProfileRow(database: DatabaseSync, p: Profile): void {
       p.rOverride ?? null,
       p.betaRate,
       p.absorptionMinutes,
-      p.dayStartHour
+      p.dayStartHour,
+      p.nonLiquorOffsetMinutes
     );
 }
 
@@ -260,7 +277,10 @@ export async function getProfile(): Promise<Profile> {
   if (!row) return { ...DEFAULT_PROFILE };
   const { id: _id, rOverride, ...rest } = row;
   void _id;
-  const profile: Profile = { ...DEFAULT_PROFILE, ...rest };
+  // Drop null columns (e.g. a column added by migration to an existing row) so
+  // they fall back to the defaults rather than overwriting them with null.
+  const clean = Object.fromEntries(Object.entries(rest).filter(([, v]) => v != null));
+  const profile: Profile = { ...DEFAULT_PROFILE, ...clean };
   if (rOverride != null) profile.rOverride = rOverride;
   else delete profile.rOverride;
   return profile;

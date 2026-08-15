@@ -117,6 +117,11 @@
             <span class="text-slate-400">Night starts at (hour 0–23)</span>
             <input id="daystart-input" type="number" min="0" max="23" class="mt-1 w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2" />
           </label>
+          <label class="text-sm sm:col-span-2">
+            <span class="text-slate-400">Time to drink a non-liquor drink (min)</span>
+            <input id="nonliquor-offset-input" type="number" min="0" class="mt-1 w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2" />
+            <span class="mt-1 block text-xs text-slate-500">Auto-backdates beer/wine (&lt; 35% ABV) logged "now" by this many minutes, so they aren't treated as drunk instantly. 0 = off.</span>
+          </label>
         </div>
       </section>
     </div>
